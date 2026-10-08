@@ -1,12 +1,11 @@
-"""TelemetryPanel — live values reported by the emulated sensor."""
+"""TelemetryPanel — live values reported by the emulated sensor (passive)."""
 
 from __future__ import annotations
 
 from PySide6.QtWidgets import QGridLayout, QGroupBox, QLabel, QWidget
 
-from isascale.application.emulator_service import EmulatorSnapshot
-from isascale.domain.models import OperationMode, ResultState
 from isascale.presentation import theme
+from isascale.presentation.view_models import TelemetryViewModel
 
 
 class TelemetryPanel(QGroupBox):
@@ -49,29 +48,15 @@ class TelemetryPanel(QGroupBox):
     def current_text(self) -> str:
         return self._current.text()
 
-    def update_snapshot(self, snap: EmulatorSnapshot) -> None:
-        reading = snap.reading
-        self._current.setText(f"{reading.current_ma / 1000.0:+10.3f}")
-        self._temperature.setText(f"{reading.temperature_c:6.1f}")
-        self._charge_as.setText(f"{reading.charge_as:12.1f}")
-        self._charge_ah.setText(f"{snap.charge_ah:10.4f}")
-
-        if not snap.running:
-            mode, color = "IDLE", theme.TEXT_DIM
-        elif snap.mode is OperationMode.RUN:
-            mode, color = "RUN", theme.OK
-        else:
-            mode, color = "STOP", theme.WARNING
-        self._mode.setText(f"{mode}  {snap.elapsed_s:7.1f} s")
-        self._mode.setStyleSheet(f"color: {color};")
-
-        self._frames.setText(f"{snap.frames_sent} / {snap.send_errors}")
-        self._frames.setStyleSheet(f"color: {theme.ERROR if snap.send_errors else theme.TEXT};")
-
-        state = reading.state
-        names = [str(f.name) for f in ResultState if f in state] or ["OK"]
-        self._state.setText(" ".join(names))
-        self._state.setStyleSheet(f"color: {theme.WARNING if state else theme.OK};")
-
-        progress = "" if snap.source_progress is None else f"  {snap.source_progress * 100:5.1f} %"
-        self._source.setText(f"{snap.source_name}{progress}")
+    def show_telemetry(self, vm: TelemetryViewModel) -> None:
+        self._current.setText(vm.current)
+        self._temperature.setText(vm.temperature)
+        self._charge_as.setText(vm.charge_as)
+        self._charge_ah.setText(vm.charge_ah)
+        self._mode.setText(vm.mode)
+        self._mode.setStyleSheet(f"color: {theme.color(vm.mode_tone)};")
+        self._frames.setText(vm.frames)
+        self._frames.setStyleSheet(f"color: {theme.color(vm.frames_tone)};")
+        self._state.setText(vm.state)
+        self._state.setStyleSheet(f"color: {theme.color(vm.state_tone)};")
+        self._source.setText(vm.source)

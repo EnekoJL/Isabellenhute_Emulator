@@ -74,7 +74,13 @@ time,current
 
 Hexagonal: `domain` (puro) ← `application` (casos de uso, `EmulatorService`) → `ports` (ABC) ←
 `infrastructure` (python-can, pandas, hilos) y `presentation` (PySide6). La raíz de composición es
-`src/isascale/bootstrap.py`. Diagrama, contratos y plan de tests en
+`src/isascale/bootstrap.py`.
+
+La GUI sigue **MVP (Model-View-Presenter, Passive View)**: `presentation/presenter.py` tiene toda la
+lógica y no importa Qt (se testea con una vista falsa en `tests/unit/test_presenter.py`); `MainWindow`
+y los widgets solo pintan los view models (`view_models.py`) y reenvían eventos al presenter.
+
+Diagrama, contratos y plan de tests en
 [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md).
 
 ## Datasheets

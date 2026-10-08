@@ -1,4 +1,7 @@
-"""CurrentControlPanel — manual current, temperature, injected state flags, As reset."""
+"""CurrentControlPanel — manual current, temperature, injected state flags, As reset (passive).
+
+Emits engineering units (A, degC) and raw checkbox states; the presenter decides.
+"""
 
 from __future__ import annotations
 
@@ -14,28 +17,17 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from isascale.domain.models import ResultState
-
-# Manual range = nominal range x this factor, to be able to trigger OUT_OF_RANGE.
-RANGE_FACTOR = 1.2
-
 
 class CurrentControlPanel(QGroupBox):
-    """Emits engineering units (A, degC); MainWindow forwards them to the core."""
-
     current_changed = Signal(float)  # A
     temperature_changed = Signal(float)  # degC
-    flags_changed = Signal(int)  # ResultState bits
+    flags_changed = Signal(bool, bool, bool)  # OCS, measurement error, system error
     reset_charge_requested = Signal()
 
-    def __init__(self, nominal_range_a: int, parent: QWidget | None = None) -> None:
+    def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__("Manual current", parent)
-        limit = nominal_range_a * RANGE_FACTOR
-
         self._slider = QSlider(Qt.Orientation.Horizontal)
-        self._slider.setRange(int(-limit), int(limit))
         self._spin = QDoubleSpinBox()
-        self._spin.setRange(-limit, limit)
         self._spin.setDecimals(1)
         self._spin.setSingleStep(1.0)
         self._spin.setSuffix(" A")
@@ -49,13 +41,11 @@ class CurrentControlPanel(QGroupBox):
         self._temperature.setSuffix(" °C")
         self._temperature.valueChanged.connect(self.temperature_changed.emit)
 
-        self._flag_boxes = {
-            ResultState.OCS: QCheckBox("OCS"),
-            ResultState.ANY_MEASUREMENT_ERROR: QCheckBox("Meas. error"),
-            ResultState.SYSTEM_ERROR: QCheckBox("System error"),
-        }
+        self._ocs = QCheckBox("OCS")
+        self._meas_error = QCheckBox("Meas. error")
+        self._sys_error = QCheckBox("System error")
         flags_row = QHBoxLayout()
-        for box in self._flag_boxes.values():
+        for box in (self._ocs, self._meas_error, self._sys_error):
             box.toggled.connect(self._on_flags)
             flags_row.addWidget(box)
 
@@ -79,25 +69,23 @@ class CurrentControlPanel(QGroupBox):
     def temperature_c(self) -> float:
         return self._temperature.value()
 
+    def set_limit(self, limit_a: float) -> None:
+        self._slider.setRange(int(-limit_a), int(limit_a))
+        self._spin.setRange(-limit_a, limit_a)
+
     def set_current_a(self, value: float) -> None:
         self._spin.setValue(value)
-
-    def flags(self) -> ResultState:
-        state = ResultState.NONE
-        for flag, box in self._flag_boxes.items():
-            if box.isChecked():
-                state |= flag
-        return state
 
     def _on_slider(self, value: int) -> None:
         if int(round(self._spin.value())) != value:
             self._spin.setValue(float(value))
 
     def _on_spin(self, value: float) -> None:
+        # Keep slider and spinbox in sync (pure widget behaviour).
         self._slider.blockSignals(True)
         self._slider.setValue(int(round(value)))
         self._slider.blockSignals(False)
         self.current_changed.emit(value)
 
     def _on_flags(self) -> None:
-        self.flags_changed.emit(int(self.flags()))
+        self.flags_changed.emit(self._ocs.isChecked(), self._meas_error.isChecked(), self._sys_error.isChecked())

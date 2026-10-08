@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import QApplication
 
+from isascale.presentation.view_models import Tone
+
 BACKGROUND = "#121417"
 SURFACE = "#1B1E23"
 SURFACE_ALT = "#23272E"
@@ -80,6 +82,20 @@ QSlider::groove:horizontal {{ height: 6px; background: {SURFACE_ALT}; border-rad
 QSlider::handle:horizontal {{ background: {ACCENT}; width: 14px; margin: -5px 0; border-radius: 7px; }}
 QStatusBar {{ background-color: {SURFACE}; color: {TEXT_DIM}; border-top: 1px solid {BORDER}; }}
 """
+
+
+TONE_COLORS = {
+    Tone.NORMAL: TEXT,
+    Tone.DIM: TEXT_DIM,
+    Tone.NEUTRAL: NEUTRAL,
+    Tone.OK: OK,
+    Tone.WARNING: WARNING,
+    Tone.ERROR: ERROR,
+}
+
+
+def color(tone: Tone) -> str:
+    return TONE_COLORS[tone]
 
 
 def apply_theme(app: QApplication) -> None:

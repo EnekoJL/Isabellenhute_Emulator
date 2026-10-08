@@ -28,14 +28,16 @@ src/isascale/
   infrastructure/
     adapters/    can_python_can.py  can_ixxat.py  can_virtual.py  csv_reader.py   [developer]
     concurrency/ precision_timer.py  worker_thread.py                             [developer]
-  presentation/  main_window.py  theme.py
+  presentation/  presenter.py  view.py  view_models.py                          [MVP - sin Qt]
+                 main_window.py  theme.py                                         [vista Qt]
     widgets/     can_status_indicator.py  connection_panel.py
-                 current_control.py  profile_panel.py  telemetry_panel.py         [developer]
+                 current_control.py  profile_panel.py  telemetry_panel.py         [vista Qt]
 tests/
   conftest.py  fakes.py
   unit/          test_ivt_protocol.py  test_accumulator.py  test_models.py
                  test_sources.py  test_bms_requests.py  test_csv_reader.py
-                 test_python_can_adapter.py  test_worker_thread.py                [pytest]
+                 test_python_can_adapter.py  test_worker_thread.py
+                 test_presenter.py                                                [pytest]
   integration/   test_virtual_can_pipeline.py  test_emulator_service.py
                  test_gui_smoke.py (marker gui, importorskip PySide6)             [pytest]
 ```
@@ -80,18 +82,27 @@ Diferencias con la estructura pedida (justificadas por SRP): `accumulator.py` (B
 - Bucle: `deadline = service.tick(); timer.sleep_until(min(deadline, now + 0.05))` hasta `stop()` (threading.Event).
 - Excepción inesperada en `tick()` → se guarda en `last_exception`, se registra con `logging` y el hilo sigue (no muere el emulador).
 
-## 4. Presentación (developer)
+## 4. Presentación — MVP (Passive View)
 
-- `MainWindow(service, manual_uc, profile_uc, can_port, worker, config)`; refresco 10 Hz con `QTimer` leyendo `service.snapshot()`.
-- `ConnectionPanel`: canal, bitrate (250k/500k/1M), periodos I/T/As, botón Conectar/Desconectar (llama `can_port.connect`/`disconnect`,
-  `service.update_config`), errores en barra de estado — nunca excepción sin capturar.
-- `CanStatusIndicator`: LED (gris DISCONNECTED, verde BUS_OK, ámbar WARNING, rojo BUS_OFF) + texto + Hz medidos + TX/errores.
-- `CurrentControlPanel`: slider + spinbox en A (± rango nominal ×1.2), temperatura, checkboxes OCS / error medida / error sistema,
-  botón reset As.
-- `ProfilePanel`: cargar CSV, combo perfiles integrados (WOT / Regen / Idle), checkbox bucle, gráfica pyqtgraph + `InfiniteLine` de progreso.
-- `TelemetryPanel`: I [A], T [°C], As, Ah, modo RUN/STOP, tramas enviadas.
-- `theme.py`: QSS oscuro "automoción" (fondo #121417, acento #00B4D8, alertas ámbar/rojo).
-- Botones Start manual / Start perfil / Stop.
+```
+widgets / MainWindow (Qt)  --eventos-->  EmulatorPresenter (sin Qt)  -->  service / use cases / CanBusPort
+          ^                                      |
+          +------ view models (texto + Tone) ----+   vía protocolo EmulatorView
+```
+
+- **`presenter.py` — `EmulatorPresenter(view, service, manual_uc, profile_uc, can_port, worker)`**: toda la lógica de la GUI.
+  Métodos `on_*` (uno por evento de usuario: conectar, start manual/perfil, stop, corriente, temperatura, flags,
+  reset As, selección de perfil/CSV, refresco 10 Hz, cierre). Decide qué está habilitado, formatea textos, captura
+  errores (`CanBusError`, `ProfileFormatError`, `ValueError`, …) y los muestra; nunca propaga. Mappers puros
+  (`telemetry_vm`, `bus_status_vm`, `controls_vm`, `config_from_form`, `form_from_config`) testeados aparte.
+- **`view.py` — `EmulatorView` (Protocol)**: lo único que el presenter puede pedir a la vista (`set_*`, `show_*`).
+  Protocol y no ABC porque los widgets Qt tienen su propia metaclase.
+- **`view_models.py`**: dataclasses inmutables con texto ya formateado y `Tone` (OK/WARNING/ERROR/…) en vez de colores.
+- **Vista Qt** (`main_window.py`, `widgets/`): solo pinta view models y reenvía eventos (`bind(presenter)`). No importa
+  `application`/`domain`/`ports`. Únicas "decisiones" permitidas: comportamiento puro de widget (sincronizar slider y
+  spinbox, abrir el diálogo de fichero) y el `QTimer` de 100 ms que llama a `presenter.on_refresh()`.
+- `theme.py`: QSS oscuro "automoción" (fondo #121417, acento #00B4D8, alertas ámbar/rojo) y mapa `Tone → color`.
+- `create_main_window(ctx)` compone vista + presenter; `run_gui(ctx)` destruye la ventana antes del teardown de Qt.
 
 ## 5. Arranque
 
@@ -115,6 +126,7 @@ Headless: conecta, arranca, imprime snapshot cada 1 s, Ctrl+C → stop + disconn
 | `unit/test_csv_reader.py` | CSV válido A y mA, comentarios, cabeceras con espacios; todos los errores de 3.4 (tmp_path). |
 | `unit/test_python_can_adapter.py` | Con `bus_factory` mock (pytest-mock): errores de conexión, TX, mapeo de estados, filtrado RX. |
 | `unit/test_worker_thread.py` | Worker llama tick, para limpio, sobrevive excepción. |
+| `unit/test_presenter.py` | Presenter con `FakeView` (sin Qt): estado inicial, conectar/desconectar, errores, manual/perfil, flags, CSV, refresco, mappers de view models. |
 | `integration/test_emulator_service.py` | Con FakeTimer + fake CanBusPort: periodos exactos por canal, contador por canal con wrap, OUT_OF_RANGE, flags inyectados, STOP/RUN, RESTART, cambio manual↔perfil, fallo de bus (cuenta errores, no lanza, recupera), start sin conexión → CanConnectionError, update_config en marcha → RuntimeError. |
 | `integration/test_virtual_can_pipeline.py` | VirtualCanAdapter + bus python-can virtual "BMS" en el mismo canal (canal único por test): emulador envía → BMS recibe y decodifica; BMS pide 0x79 → recibe 0xB9; inject_fault BUS_OFF → errores contados y estado BUS_OFF; recuperación. |
 | `integration/test_gui_smoke.py` | `QT_QPA_PLATFORM=offscreen`; construye MainWindow con bus virtual, conecta, start/stop manual. |

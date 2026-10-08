@@ -1,12 +1,9 @@
-"""ConnectionPanel — channel, bitrate, cycle periods and Connect/Disconnect.
+"""ConnectionPanel — channel, bitrate, cycle periods and Connect/Disconnect (passive).
 
-Applies the configuration through service.update_config() and opens the bus
-through the CanBusPort. Errors are emitted via `error`, never raised.
+Emits connect_toggled; the presenter reads form() and decides what to do.
 """
 
 from __future__ import annotations
-
-from dataclasses import replace
 
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
@@ -21,39 +18,23 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from isascale.application.emulator_service import EmulatorService
-from isascale.domain.models import MAX_CYCLE_MS, MIN_CYCLE_MS, Bitrate, IVTConfig
-from isascale.ports.can_port import CanBusError, CanBusPort
-
-BITRATE_LABELS = {Bitrate.B250K: "250 kbit/s", Bitrate.B500K: "500 kbit/s", Bitrate.B1M: "1 Mbit/s"}
+from isascale.presentation.view_models import ConnectionForm, ConnectionOptions
 
 
 class ConnectionPanel(QGroupBox):
-    connected = Signal()
-    disconnected = Signal()
-    error = Signal(str)
-    info = Signal(str)
+    connect_toggled = Signal()
 
-    def __init__(self, service: EmulatorService, can_port: CanBusPort, parent: QWidget | None = None) -> None:
+    def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__("Connection", parent)
-        self._service = service
-        self._can = can_port
-        cfg = service.config
-
-        self._channel = QLineEdit(cfg.channel)
+        self._channel = QLineEdit()
         self._bitrate = QComboBox()
-        for bitrate, label in BITRATE_LABELS.items():
-            self._bitrate.addItem(label, int(bitrate))
-        self._bitrate.setCurrentIndex(self._bitrate.findData(int(cfg.bitrate)))
-        self._period_i = self._period_box(cfg.current_period_ms)
-        self._period_t = self._period_box(cfg.temperature_period_ms)
-        self._period_as = self._period_box(cfg.charge_period_ms)
+        self._period_i = QSpinBox()
+        self._period_t = QSpinBox()
+        self._period_as = QSpinBox()
         self._enable_t = QCheckBox("on")
-        self._enable_t.setChecked(cfg.temperature_enabled)
         self._enable_as = QCheckBox("on")
-        self._enable_as.setChecked(cfg.charge_enabled)
-        self._button = QPushButton()
-        self._button.clicked.connect(self._toggle)
+        self.connect_button = QPushButton("Connect")
+        self.connect_button.clicked.connect(self.connect_toggled.emit)
 
         form = QFormLayout(self)
         form.addRow("Channel", self._channel)
@@ -61,15 +42,7 @@ class ConnectionPanel(QGroupBox):
         form.addRow("I 0x521 [ms]", self._period_i)
         form.addRow("T 0x525 [ms]", self._row(self._period_t, self._enable_t))
         form.addRow("As 0x527 [ms]", self._row(self._period_as, self._enable_as))
-        form.addRow(self._button)
-        self._refresh_enabled()
-
-    @staticmethod
-    def _period_box(value: int) -> QSpinBox:
-        box = QSpinBox()
-        box.setRange(MIN_CYCLE_MS, MAX_CYCLE_MS)
-        box.setValue(value)
-        return box
+        form.addRow(self.connect_button)
 
     @staticmethod
     def _row(*widgets: QWidget) -> QWidget:
@@ -80,12 +53,26 @@ class ConnectionPanel(QGroupBox):
             layout.addWidget(w)
         return holder
 
-    def build_config(self) -> IVTConfig:
-        """Config from the form (raises ValueError if invalid, e.g. > 1000 msg/s)."""
-        return replace(
-            self._service.config,
-            channel=self._channel.text().strip() or "0",
-            bitrate=Bitrate(int(self._bitrate.currentData())),
+    def set_form(self, form: ConnectionForm, options: ConnectionOptions) -> None:
+        self._channel.setText(form.channel)
+        self._bitrate.clear()
+        for label, value in options.bitrates:
+            self._bitrate.addItem(label, value)
+        self._bitrate.setCurrentIndex(self._bitrate.findData(form.bitrate))
+        for box, value in (
+            (self._period_i, form.current_period_ms),
+            (self._period_t, form.temperature_period_ms),
+            (self._period_as, form.charge_period_ms),
+        ):
+            box.setRange(options.period_min_ms, options.period_max_ms)
+            box.setValue(value)
+        self._enable_t.setChecked(form.temperature_enabled)
+        self._enable_as.setChecked(form.charge_enabled)
+
+    def form(self) -> ConnectionForm:
+        return ConnectionForm(
+            channel=self._channel.text(),
+            bitrate=int(self._bitrate.currentData()),
             current_period_ms=self._period_i.value(),
             temperature_period_ms=self._period_t.value(),
             charge_period_ms=self._period_as.value(),
@@ -93,40 +80,13 @@ class ConnectionPanel(QGroupBox):
             charge_enabled=self._enable_as.isChecked(),
         )
 
-    def connect_bus(self) -> bool:
-        try:
-            config = self.build_config()
-            self._service.stop()
-            self._service.update_config(config)
-            self._can.connect(config.channel, config.bitrate)
-        except (CanBusError, ValueError, RuntimeError) as exc:
-            self.error.emit(f"Connect failed: {exc}")
-            return False
-        finally:
-            self._refresh_enabled()
-        self.info.emit(f"Connected to channel {config.channel} @ {int(config.bitrate) // 1000} kbit/s")
-        self.connected.emit()
-        return True
-
-    def disconnect_bus(self) -> None:
-        self._service.stop()
-        self._can.disconnect()
-        self._refresh_enabled()
-        self.info.emit("Disconnected")
-        self.disconnected.emit()
-
-    def _toggle(self) -> None:
-        if self._can.is_connected:
-            self.disconnect_bus()
-        else:
-            self.connect_bus()
-
-    def _refresh_enabled(self) -> None:
-        connected = self._can.is_connected
+    def set_editable(self, editable: bool) -> None:
         for w in (self._channel, self._bitrate, self._period_i, self._period_t, self._period_as,
                   self._enable_t, self._enable_as):
-            w.setEnabled(not connected)
-        self._button.setText("Disconnect" if connected else "Connect")
-        self._button.setProperty("role", "danger" if connected else "primary")
-        self._button.style().unpolish(self._button)
-        self._button.style().polish(self._button)
+            w.setEnabled(editable)
+
+    def set_connect_button(self, text: str, danger: bool) -> None:
+        self.connect_button.setText(text)
+        self.connect_button.setProperty("role", "danger" if danger else "primary")
+        self.connect_button.style().unpolish(self.connect_button)
+        self.connect_button.style().polish(self.connect_button)

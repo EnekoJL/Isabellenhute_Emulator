@@ -1,15 +1,14 @@
-"""MainWindow — composes the panels and forwards user actions to the core.
+"""MainWindow — the Qt view (MVP, Passive View).
 
-All calls into the core go through the service, the use cases or the
-CanBusPort. The transmission worker thread runs tick(); this (GUI) thread only
-reads service.snapshot() every 100 ms and never calls tick().
+Composes the panels, implements the EmulatorView protocol (pure rendering) and
+forwards every user event to EmulatorPresenter. No decisions are taken here.
+The only timing it owns is the 10 Hz QTimer that asks the presenter to refresh.
 """
 
 from __future__ import annotations
 
 import sys
-from enum import Enum
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Sequence
 
 import pyqtgraph as pg
 from PySide6.QtCore import QCoreApplication, QEvent, QTimer
@@ -24,12 +23,17 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from isascale.application.emulator_service import EmulatorService
-from isascale.application.use_cases import RunCsvProfileEmulationUseCase, RunManualEmulationUseCase
-from isascale.domain.models import IVTConfig, ResultState
-from isascale.ports.can_port import CanBusError, CanBusPort
-from isascale.ports.profile_port import ProfileFormatError
 from isascale.presentation import theme
+from isascale.presentation.presenter import EmulatorPresenter
+from isascale.presentation.view_models import (
+    BusStatusViewModel,
+    ConnectionForm,
+    ConnectionOptions,
+    ControlsViewModel,
+    PlotViewModel,
+    ProfileChoice,
+    TelemetryViewModel,
+)
 from isascale.presentation.widgets.can_status_indicator import CanStatusIndicator
 from isascale.presentation.widgets.connection_panel import ConnectionPanel
 from isascale.presentation.widgets.current_control import CurrentControlPanel
@@ -38,56 +42,46 @@ from isascale.presentation.widgets.telemetry_panel import TelemetryPanel
 
 if TYPE_CHECKING:
     from isascale.bootstrap import AppContext
-    from isascale.infrastructure.concurrency.worker_thread import TransmissionWorker
 
 REFRESH_MS = 100
 STATUS_TIMEOUT_MS = 8000
-# Exceptions a user action may raise; shown in the status bar, never propagated.
-USER_ERRORS = (CanBusError, ProfileFormatError, ValueError, RuntimeError, KeyError)
-
-
-class ActiveMode(Enum):
-    NONE = "none"
-    MANUAL = "manual"
-    PROFILE = "profile"
 
 
 class MainWindow(QMainWindow):
-    def __init__(
-        self,
-        service: EmulatorService,
-        manual_uc: RunManualEmulationUseCase,
-        profile_uc: RunCsvProfileEmulationUseCase,
-        can_port: CanBusPort,
-        worker: TransmissionWorker,
-        config: IVTConfig,
-        parent: QWidget | None = None,
-    ) -> None:
-        super().__init__(parent)
-        self._service = service
-        self._manual_uc = manual_uc
-        self._profile_uc = profile_uc
-        self._can = can_port
-        self._worker = worker
-        self._active = ActiveMode.NONE
-        self._last_error_shown = ""
+    """Implements isascale.presentation.view.EmulatorView."""
 
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.presenter: EmulatorPresenter | None = None
         self.setWindowTitle("IVT-S-U0 CAN emulator")
-        self.connection_panel = ConnectionPanel(service, can_port)
+        self.connection_panel = ConnectionPanel()
         self.status_indicator = CanStatusIndicator()
-        self.current_control = CurrentControlPanel(int(config.nominal_range))
-        self.profile_panel = ProfilePanel(profile_uc)
+        self.current_control = CurrentControlPanel()
+        self.profile_panel = ProfilePanel()
         self.telemetry_panel = TelemetryPanel()
         self._build_layout()
-        self._wire_signals()
-
-        # The worker also serves BMS requests while stopped, so it lives as long as the window.
-        self._worker.start()
         self._refresh_timer = QTimer(self)
         self._refresh_timer.setInterval(REFRESH_MS)
-        self._refresh_timer.timeout.connect(self.refresh)
+
+    def bind(self, presenter: EmulatorPresenter) -> None:
+        """Wire widget events to the presenter, let it push the initial state, start refreshing."""
+        self.presenter = presenter
+        p = presenter
+        self.connection_panel.connect_toggled.connect(lambda: p.on_connect_toggled(self.connection_panel.form()))
+        self.start_manual_button.clicked.connect(
+            lambda: p.on_start_manual(self.current_control.current_a, self.current_control.temperature_c)
+        )
+        self.start_profile_button.clicked.connect(lambda: p.on_start_profile(self.profile_panel.loop))
+        self.stop_button.clicked.connect(p.on_stop)
+        self.current_control.current_changed.connect(p.on_current_changed)
+        self.current_control.temperature_changed.connect(p.on_temperature_changed)
+        self.current_control.flags_changed.connect(p.on_flags_changed)
+        self.current_control.reset_charge_requested.connect(p.on_reset_charge)
+        self.profile_panel.profile_selected.connect(p.on_profile_selected)
+        self.profile_panel.csv_chosen.connect(p.on_csv_selected)
+        self._refresh_timer.timeout.connect(p.on_refresh)
+        p.start()
         self._refresh_timer.start()
-        self.refresh()
 
     # ----------------------------------------------------------------- layout
 
@@ -124,56 +118,35 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("Disconnected — choose channel and bitrate, then Connect")
         self.resize(1280, 720)
 
-    def _wire_signals(self) -> None:
-        self.start_manual_button.clicked.connect(self.start_manual)
-        self.start_profile_button.clicked.connect(self.start_profile)
-        self.stop_button.clicked.connect(self.stop_emulation)
-        for panel in (self.connection_panel, self.profile_panel):
-            panel.error.connect(self.show_error)
-            panel.info.connect(self.show_info)
-        self.connection_panel.disconnected.connect(self._on_disconnected)
-        self.current_control.current_changed.connect(self._on_current_changed)
-        self.current_control.temperature_changed.connect(self._service.set_temperature)
-        self.current_control.flags_changed.connect(lambda bits: self._service.set_state_flags(ResultState(bits)))
-        self.current_control.reset_charge_requested.connect(self._service.reset_charge)
+    # ------------------------------------------------------- EmulatorView API
 
-    # ---------------------------------------------------------------- actions
+    def set_connection_form(self, form: ConnectionForm, options: ConnectionOptions) -> None:
+        self.connection_panel.set_form(form, options)
 
-    def start_manual(self) -> bool:
-        try:
-            self._service.set_temperature(self.current_control.temperature_c)
-            self._manual_uc.start(self.current_control.current_a * 1000.0)
-        except USER_ERRORS as exc:
-            self.show_error(f"Cannot start manual mode: {exc}")
-            return False
-        self._active = ActiveMode.MANUAL
-        self.show_info("Manual mode running")
-        return True
+    def set_current_limit(self, limit_a: float) -> None:
+        self.current_control.set_limit(limit_a)
 
-    def start_profile(self) -> bool:
-        try:
-            self._profile_uc.start(loop=self.profile_panel.loop)
-        except USER_ERRORS as exc:
-            self.show_error(f"Cannot start profile: {exc}")
-            return False
-        self._active = ActiveMode.PROFILE
-        self.show_info(f"Profile '{self._profile_uc.profile.name}' running")  # type: ignore[union-attr]
-        return True
+    def set_profile_choices(self, choices: Sequence[ProfileChoice], selected_key: str) -> None:
+        self.profile_panel.set_choices(choices, selected_key)
 
-    def stop_emulation(self) -> None:
-        self._service.stop()
-        self._active = ActiveMode.NONE
-        self.show_info("Stopped")
+    def show_controls(self, vm: ControlsViewModel) -> None:
+        self.connection_panel.set_editable(vm.connection_editable)
+        self.connection_panel.set_connect_button(vm.connect_text, vm.connect_danger)
+        self.start_manual_button.setEnabled(vm.start_manual_enabled)
+        self.start_profile_button.setEnabled(vm.start_profile_enabled)
+        self.stop_button.setEnabled(vm.stop_enabled)
 
-    def _on_current_changed(self, amps: float) -> None:
-        # Only forwarded in manual mode: set_manual_current would replace a playing profile.
-        if self._active is ActiveMode.MANUAL and self._service.running:
-            self._manual_uc.set_current(amps * 1000.0)
+    def show_bus_status(self, vm: BusStatusViewModel) -> None:
+        self.status_indicator.show_status(vm)
 
-    def _on_disconnected(self) -> None:
-        self._active = ActiveMode.NONE
+    def show_telemetry(self, vm: TelemetryViewModel) -> None:
+        self.telemetry_panel.show_telemetry(vm)
 
-    # --------------------------------------------------------------- feedback
+    def show_profile_plot(self, vm: PlotViewModel) -> None:
+        self.profile_panel.show_plot(vm)
+
+    def set_profile_cursor(self, time_s: float | None) -> None:
+        self.profile_panel.set_cursor(time_s)
 
     def show_error(self, message: str) -> None:
         self.statusBar().setStyleSheet(f"color: {theme.ERROR};")
@@ -183,36 +156,21 @@ class MainWindow(QMainWindow):
         self.statusBar().setStyleSheet("")
         self.statusBar().showMessage(message, STATUS_TIMEOUT_MS)
 
-    def refresh(self) -> None:
-        """10 Hz: pull a snapshot from the service and update all read-only views."""
-        try:
-            snap = self._service.snapshot()
-        except Exception as exc:  # noqa: BLE001 - the GUI must survive anything here
-            self.show_error(f"Snapshot failed: {exc}")
-            return
-        self.status_indicator.update_status(snap.bus_status, snap.measured_current_rate_hz)
-        self.telemetry_panel.update_snapshot(snap)
-        self.profile_panel.set_progress(snap.source_progress if self._active is ActiveMode.PROFILE else None)
-        if snap.last_error and snap.last_error != self._last_error_shown:
-            self._last_error_shown = snap.last_error
-            self.show_error(f"Bus error: {snap.last_error}")
-        connected = self._can.is_connected
-        self.start_manual_button.setEnabled(connected)
-        self.start_profile_button.setEnabled(connected)
-        self.stop_button.setEnabled(snap.running)
-
     # -------------------------------------------------------------- lifecycle
 
     def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802 - Qt override
         self._refresh_timer.stop()
-        self._service.stop()
-        self._worker.stop()
-        self._can.disconnect()
+        if self.presenter is not None:
+            self.presenter.on_close()
         super().closeEvent(event)
 
 
 def create_main_window(ctx: AppContext) -> MainWindow:
-    return MainWindow(ctx.service, ctx.manual_uc, ctx.profile_uc, ctx.can_port, ctx.worker, ctx.config)
+    """Composition of view + presenter (the presenter gets the core from the AppContext)."""
+    window = MainWindow()
+    presenter = EmulatorPresenter(window, ctx.service, ctx.manual_uc, ctx.profile_uc, ctx.can_port, ctx.worker)
+    window.bind(presenter)
+    return window
 
 
 def run_gui(ctx: AppContext) -> int:

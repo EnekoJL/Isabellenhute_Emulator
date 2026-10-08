@@ -1,4 +1,4 @@
-"""GUI smoke test: offscreen Qt, MainWindow on a virtual bus, connect + start/stop manual + profile."""
+"""GUI smoke test: offscreen Qt, MainWindow + presenter on a virtual bus, driven through widget clicks."""
 
 from __future__ import annotations
 
@@ -72,23 +72,32 @@ def drain(bus):
     return msgs
 
 
+def connect(window, qapp):
+    window.connection_panel.connect_button.click()
+    qapp.processEvents()
+
+
 def test_window_builds_and_starts_worker(window, ctx, qapp):
     assert window.windowTitle()
-    assert ctx.worker.is_alive  # MainWindow owns the worker lifetime
+    assert window.presenter is not None
+    assert ctx.worker.is_alive  # the presenter starts the worker when bound
     assert not ctx.can_port.is_connected
     assert not window.start_manual_button.isEnabled()
     assert window.status_indicator.state_text == BusState.DISCONNECTED.value
 
 
 def test_start_manual_without_connection_shows_error_not_exception(window, ctx, qapp):
-    assert window.start_manual() is False
+    window.start_manual_button.setEnabled(True)  # force the click past the disabled state
+    window.start_manual_button.click()
     assert not ctx.service.running
+    assert "Cannot start manual mode" in window.statusBar().currentMessage()
     assert window.statusBar().currentMessage()
 
 
 def test_connect_start_stop_manual(window, ctx, qapp, bms):
-    assert window.connection_panel.connect_bus() is True
+    connect(window, qapp)
     assert ctx.can_port.is_connected
+    assert window.connection_panel.connect_button.text() == "Disconnect"
     pump(qapp, 0.15)
     assert window.start_manual_button.isEnabled()
     assert window.status_indicator.state_text == BusState.BUS_OK.value
@@ -111,17 +120,18 @@ def test_connect_start_stop_manual(window, ctx, qapp, bms):
 
 
 def test_builtin_profile_start(window, ctx, qapp, bms):
-    window.connection_panel.connect_bus()
-    assert ctx.profile_uc.profile is not None  # combo pre-selects a built-in profile
-    assert window.start_profile() is True
+    connect(window, qapp)
+    assert ctx.profile_uc.profile is not None  # presenter pre-selects a built-in profile
+    window.start_profile_button.click()
+    assert ctx.service.running
     pump(qapp, 0.3)
     assert ctx.service.snapshot().source_progress is not None
     assert [m for m in drain(bms) if m.arbitration_id == 0x521]
 
 
 def test_bus_off_is_shown_and_gui_survives(window, ctx, qapp):
-    window.connection_panel.connect_bus()
-    window.start_manual()
+    connect(window, qapp)
+    window.start_manual_button.click()
     ctx.can_port.inject_fault(BusState.BUS_OFF)
     pump(qapp, 0.3)
     assert window.status_indicator.state_text == BusState.BUS_OFF.value
@@ -133,16 +143,23 @@ def test_bus_off_is_shown_and_gui_survives(window, ctx, qapp):
 
 def test_connect_failure_is_reported_in_status_bar(window, ctx, qapp):
     ctx.can_port.fail_next_connect = True
-    assert window.connection_panel.connect_bus() is False
+    connect(window, qapp)
     assert not ctx.can_port.is_connected
     assert "Connect failed" in window.statusBar().currentMessage()
 
 
 def test_close_stops_worker_and_disconnects(window, ctx, qapp):
-    window.connection_panel.connect_bus()
-    window.start_manual()
+    connect(window, qapp)
+    window.start_manual_button.click()
     window.close()
     qapp.processEvents()
     assert not ctx.worker.is_alive
     assert not ctx.can_port.is_connected
     assert not ctx.service.running
+
+
+def test_profile_combo_selection_reaches_presenter(window, ctx, qapp):
+    combo = window.profile_panel._combo
+    combo.setCurrentIndex(combo.findData("regen"))
+    qapp.processEvents()
+    assert ctx.profile_uc.profile.name == "Regen braking"
