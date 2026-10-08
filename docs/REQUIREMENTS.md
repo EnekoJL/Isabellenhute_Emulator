@@ -47,7 +47,7 @@ Convención de signo: **+ = descarga** (batería → motor), **− = carga** (re
 
 | # | Decisión | Motivo |
 |---|----------|--------|
-| D-1 | Petición de identificación = `0x79` (GET_DEVICE_ID); `0xB9` es la **respuesta**. | El prompt original decía "solicita 0xB9"; el datasheet 8.7 define 0x79 → 0xB9. |
+| D-1 | Petición de identificación = `0x79` (GET_DEVICE_ID); `0xB9` es la **respuesta**. | El prompt original decía "solicita 0xB9"; el datasheet 8.7 define 0x79 → 0xB9. **Confirmado por el usuario 2026-10-08: seguir el datasheet.** |
 | D-2 | T y As activados por defecto (en el sensor real vienen desactivados). | Lo pide la especificación del emulador. |
 | D-3 | Solo se implementan los comandos de F-09; el resto responde 0xFF. | U0 sin tensión; Set CAN ID / Config Result / logdata fuera de alcance v0.1. |
 | D-4 | Rango nominal por defecto 1000 A (IVT-S-1K-U0-I-CAN1). Configurable. | Variante habitual en tracción; confirmar con el sensor real del equipo. |
