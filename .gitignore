@@ -31,11 +31,13 @@ _ReSharper*/
 .idea/
 #Nuget packages folder
 packages/
-/iso_emulator/__pycache__/sensor_emulator.cpython-313.pyc
-/iso_monitor/__pycache__/display.cpython-313.pyc
-/iso_monitor/__pycache__/isolation_sensor.cpython-313.pyc
 #Python
 __pycache__/
 *.pyc
 .venv/
 .pytest_cache/
+*.egg-info/
+build/
+dist/
+.coverage
+htmlcov/
