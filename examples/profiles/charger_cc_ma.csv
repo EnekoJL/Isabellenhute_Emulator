@@ -1,0 +1,8 @@
+# Charger constant-current step, current in mA (negative = charging)
+time,current_ma
+0.0,-500
+2.0,-500
+3.0,-30000
+20.0,-30000
+22.0,-5000
+25.0,-500

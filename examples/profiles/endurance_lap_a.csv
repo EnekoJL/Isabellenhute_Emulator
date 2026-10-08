@@ -1,0 +1,12 @@
+# Endurance lap stimulus (representative, not measured). time [s], current [A]
+# + = discharge (traction), - = charge (regen)
+time,current
+0.0,5
+1.0,180
+3.0,320
+4.0,-80
+5.0,-40
+6.0,250
+8.0,300
+9.0,-110
+10.0,10
