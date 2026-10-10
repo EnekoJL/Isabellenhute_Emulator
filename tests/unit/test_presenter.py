@@ -327,8 +327,11 @@ def test_bus_error_shown_once(connected, view, svc, port, timer):
     assert view.bus_status.tone is Tone.WARNING
 
 
-def test_refresh_survives_snapshot_failure(presenter, view, svc, mocker):
-    mocker.patch.object(svc, "snapshot", side_effect=RuntimeError("boom"))
+def test_refresh_survives_snapshot_failure(presenter, view, svc, monkeypatch):
+    def boom():
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(svc, "snapshot", boom)
     presenter.on_refresh()
     assert view.errors[-1] == "Snapshot failed: boom"
 
