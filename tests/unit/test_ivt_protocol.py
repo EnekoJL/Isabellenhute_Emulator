@@ -5,7 +5,18 @@ from __future__ import annotations
 import pytest
 
 from isascale.domain import ivt_protocol as proto
-from isascale.domain.models import INT32_MAX, INT32_MIN, CANFrame, NominalRange, OperationMode, ResultState
+from isascale.domain.models import (
+    INT32_MAX,
+    INT32_MIN,
+    CANFrame,
+    ChannelConfig,
+    Mux,
+    NominalRange,
+    OcThresholds,
+    OperationMode,
+    ResultState,
+    TriggerMode,
+)
 
 # ----------------------------------------------------------------- 0x521 current
 
@@ -234,3 +245,61 @@ def test_parse_command_extracts_code_and_payload():
 )
 def test_parse_command_ignores_non_commands(frame):
     assert proto.parse_command(frame) is None
+
+
+# ------------------------------------------------------------ full command set
+
+
+def test_little_endian_result_datasheet_example():
+    data = proto.encode_result(0x01, 35_000, 5, little_endian=True)
+    assert list(data) == [0x01, 0x05, 0xB8, 0x88, 0x00, 0x00]  # datasheet 8.2 example
+    assert proto.decode_result(data, little_endian=True).value == 35_000
+
+
+def test_result_frame_applies_sign_and_saturates():
+    config = ChannelConfig(TriggerMode.CYCLIC, 20, invert_sign=True)
+    frame = proto.result_frame(0x521, Mux.I, -(2**31), 0, ResultState.NONE, config)
+    assert proto.decode_result(frame.data).value == 2**31 - 1
+
+
+def test_config_result_frame_and_parse_roundtrip():
+    config = ChannelConfig(TriggerMode.TRIGGERED, 300, little_endian=True)
+    frame = proto.config_result_frame(Mux.T, config, error_mask_reporting=True)
+    assert list(frame.data) == [0xA4, 0x61, 0x01, 0x2C, 0, 0, 0, 0]
+    command = proto.parse_command(CANFrame(0x411, bytes([0x24]) + frame.data[1:]))
+    assert proto.parse_channel_config(command, config) == (config, True)
+
+
+def test_parse_channel_config_rejects_unknown_mode():
+    command = proto.parse_command(CANFrame(0x411, bytes([0x20, 0x05, 0, 10])))
+    assert proto.parse_channel_config(command, ChannelConfig(TriggerMode.CYCLIC, 20)) is None
+
+
+def test_command_field_accessors():
+    command = proto.parse_command(CANFrame(0x411, bytes([0x36, 0xFE, 0x0C, 0x01, 0xC2, 0x0A, 0x0B])))
+    assert (command.byte(1), command.u16(1), command.i16(1), command.i16(3)) == (0xFE, 0xFE0C, -500, 450)
+    assert command.u32(3) == 0x01C20A0B
+    assert proto.parse_command(CANFrame(0x400, bytes([0x79])), command_id=0x400).code == 0x79
+
+
+@pytest.mark.parametrize(
+    ("frame", "expected"),
+    [
+        (proto.can_id_frame(0xD, 0x411, 0x01020304), [0x9D, 0x04, 0x11, 1, 2, 3, 4, 0]),
+        (proto.threshold_frame(0xB6, OcThresholds(-500, -450)), [0xB6, 0xFE, 0x0C, 0xFE, 0x3E, 0, 0, 0]),
+        (proto.oc_test_frame(70_000), [0xB3, 0xFF, 0xFF, 0, 0, 0, 0, 0]),
+        (proto.oc_test_frame(-5), [0xB3, 0, 0, 0, 0, 0, 0, 0]),
+        (proto.trigger_frame(0x1FF), [0xB1, 0x00, 0xFF, 0, 0, 0, 0, 0]),
+        (proto.store_frame(True, 0x01020304), [0xB2, 0x00, 1, 2, 3, 4, 0, 0]),
+        (proto.log_reset_frame(1, 0, 0x01020304), [0xB0, 1, 0, 1, 2, 3, 4, 0]),
+        (proto.error_bitmask_frame(0x81, 0x12, 0x40), [0x81, 0x00, 0x12, 0x40, 0, 0, 0, 0]),
+        (proto.error_counter_frame(0x80, 6, 300), [0x80, 6, 0xFF, 0, 0, 0, 0, 0]),
+        (proto.log_data_frame(0x82, 0x01, -1), [0x82, 0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]),
+        (proto.log_data_frame(0x83, 0x01, 2**60), [0x83, 0x01, 0x7F, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF]),
+        (proto.sw_version_frame((2, 3, 4, 21, 1, 2)), [0xBA, 2, 3, 4, 21, 1, 2, 0]),
+        (proto.article_number_frame(0x01020304050607), [0xBC, 1, 2, 3, 4, 5, 6, 7]),
+        (proto.alive_frame(0x01020304, 0x400, 0x600), [0xBF, 0x04, 0x00, 1, 2, 3, 4, 0]),
+    ],
+)
+def test_response_encoders(frame, expected):
+    assert list(frame.data) == expected

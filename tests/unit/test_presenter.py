@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import replace
 
 import pytest
-from fakes import FakeCanPort, FakeProfileReader, FakeTimer, run_for
+from fakes import ALL_CHANNELS, FakeCanPort, FakeProfileReader, FakeTimer, run_for
 
 from isascale.application.builtin_profiles import BUILTIN_PROFILES
 from isascale.application.emulator_service import EmulatorService
@@ -95,7 +95,7 @@ def port(timer: FakeTimer) -> FakeCanPort:
 
 @pytest.fixture
 def svc(port: FakeCanPort, timer: FakeTimer) -> EmulatorService:
-    return EmulatorService(port, timer, IVTConfig())
+    return EmulatorService(port, timer, ALL_CHANNELS)
 
 
 @pytest.fixture
@@ -128,9 +128,9 @@ def connected(presenter, view) -> EmulatorPresenter:
 
 
 def test_start_pushes_initial_state_and_starts_worker(presenter, view, worker):
-    assert view.form == form_from_config(IVTConfig())
+    assert view.form == form_from_config(ALL_CHANNELS)
     assert [label for label, _ in view.options.bitrates] == ["250 kbit/s", "500 kbit/s", "1 Mbit/s"]
-    assert (view.options.period_min_ms, view.options.period_max_ms) == (1, 100)
+    assert (view.options.period_min_ms, view.options.period_max_ms) == (1, 65535)
     assert view.limit_a == pytest.approx(1200.0)  # 1000 A nominal x 1.2
     assert [c.key for c in view.choices] == list(BUILTIN_PROFILES)
     assert view.selected_key == "wot"
@@ -200,7 +200,7 @@ def test_start_manual_without_connection_is_an_error(presenter, view, svc):
 def test_start_manual_sends_current_and_temperature(connected, svc, port, timer):
     assert connected.on_start_manual(35.0, 31.5) is True
     assert connected.active_mode is ActiveMode.MANUAL
-    run_for(svc, timer, 0.1)
+    run_for(svc, timer, 0.101)
     assert proto.decode_result(port.frames(proto.RESULT_I_ID)[-1].data).value == 35_000
     assert proto.decode_result(port.frames(proto.RESULT_T_ID)[-1].data).value == 315
 
@@ -391,3 +391,31 @@ def test_telemetry_vm_idle_and_run(connected, svc, timer):
     assert vm.state == "OUT_OF_RANGE" and vm.state_tone is Tone.WARNING
     assert vm.frames_tone is Tone.NORMAL
     assert vm.source == "manual"
+
+
+def test_telemetry_vm_shows_boot_and_active_channels(presenter, view, svc, port, timer):
+    svc.update_config(replace(ALL_CHANNELS, startup_time_ms=400))
+    port.connect("0", svc.config.bitrate)
+    svc.start()
+    vm = telemetry_vm(svc.snapshot())
+    assert vm.mode.startswith("BOOT") and vm.mode_tone is Tone.WARNING
+    assert vm.channels == "I 20ms · T 100ms · As 30ms"
+
+
+def test_channels_text_triggered_flags_and_off():
+    from isascale.domain.models import ChannelConfig, Mux, SensorSettings, TriggerMode
+
+    from isascale.presentation.presenter import channels_text
+
+    settings = SensorSettings().with_channel(Mux.I, ChannelConfig(TriggerMode.TRIGGERED, 5, True, True))
+    assert channels_text(settings) == "I trig LE -x 5ms · T off · As off"
+
+
+def test_refresh_pushes_form_when_service_config_changes(connected, view, svc, port, timer):
+    svc.start()
+    port.push_rx(0x411, [0x34, 0x00, 0x01, 0, 0, 0, 0, 0])
+    port.push_rx(0x411, [0x3A, 0x02, 0, 0, 0, 0, 0, 0])  # BMS: restart at 1 Mbit/s
+    svc.tick()
+    svc.tick()
+    connected.on_refresh()
+    assert view.form.bitrate == 1_000_000

@@ -21,7 +21,8 @@ Regla: solo `infrastructure/` importa `can`, `pandas`, `numpy`. Solo `presentati
 pyproject.toml  README.md  docs/
 src/isascale/
   __init__.py  __main__.py  bootstrap.py
-  domain/        models.py  ivt_protocol.py  accumulator.py          [HECHO - arquitecto]
+  domain/        models.py  ivt_protocol.py  accumulator.py
+                 sensor_state.py (contadores de error, log data, OCS, rango)  [HECHO]
   ports/         can_port.py  profile_port.py  timer_port.py         [HECHO - arquitecto]
   application/   emulator_service.py  use_cases.py  bms_requests.py
                  sources.py  builtin_profiles.py                      [HECHO - arquitecto]
@@ -120,18 +121,21 @@ Headless: conecta, arranca, imprime snapshot cada 1 s, Ctrl+C → stop + disconn
 | Fichero | Qué valida |
 |---------|-----------|
 | `unit/test_ivt_protocol.py` | 35000 mA → `[00, 0N, 00, 00, 88, B8]` para N=0..F; ejemplo datasheet `01 05 00 00 88 b8`; negativos (complemento a 2); límites int32 y fuera → ValueError; state en nibble alto; T 0,1 °C con redondeo; As; decode(encode(x)) == x; alive, device_id (100/300/500/1000/2500 A vs tabla datasheet), serial, mode, error; parse_command. |
-| `unit/test_models.py` | CANFrame (id > 0x7FF, > 8 bytes), IVTConfig (periodos 0/101, > 1000 msg/s), MessageCounter 0..F → 0, CurrentProfile (interpolación, extremos, no creciente). |
+| `unit/test_models.py` | CANFrame (id > 0x7FF, > 8 bytes), IVTConfig (periodos 0/65536, > 1000 msg/s, defaults datasheet), ChannelConfig, SensorSettings, MessageCounter 0..F → 0, CurrentProfile. |
+| `unit/test_sensor_state.py` | ErrorCounters (bitmask, saturación), LogBook, OcDetector (histéresis), RangeTracker (rango extendido 95 %, saturación por variante). |
 | `unit/test_accumulator.py` | Corriente constante 1 A·3600 s = 3600 As = 1 Ah; rampa (trapecio exacto); signo regen; reset; tiempo hacia atrás → ValueError; saturación int32. |
-| `unit/test_sources.py`, `unit/test_bms_requests.py` | ConstantSource, ProfileSource (bucle, hold, progreso); cada comando F-09 byte a byte. |
+| `unit/test_sources.py`, `unit/test_bms_requests.py` | ConstantSource, ProfileSource (bucle, hold, progreso); cada comando del capítulo 8 byte a byte (STOP/RUN, serie, errores). |
 | `unit/test_csv_reader.py` | CSV válido A y mA, comentarios, cabeceras con espacios; todos los errores de 3.4 (tmp_path). |
 | `unit/test_python_can_adapter.py` | Con `bus_factory` mock (pytest-mock): errores de conexión, TX, mapeo de estados, filtrado RX. |
 | `unit/test_worker_thread.py` | Worker llama tick, para limpio, sobrevive excepción. |
 | `unit/test_presenter.py` | Presenter con `FakeView` (sin Qt): estado inicial, conectar/desconectar, errores, manual/perfil, flags, CSV, refresco, mappers de view models. |
 | `integration/test_emulator_service.py` | Con FakeTimer + fake CanBusPort: periodos exactos por canal, contador por canal con wrap, OUT_OF_RANGE, flags inyectados, STOP/RUN, RESTART, cambio manual↔perfil, fallo de bus (cuenta errores, no lanza, recupera), start sin conexión → CanConnectionError, update_config en marcha → RuntimeError. |
+| `integration/test_sensor_behaviour.py` | Arranque 400 ms, reinicios, STORE/RESTART/fábrica/bitrate, reconfiguración por CAN, endianness/signo, TRIGGER, OCS, bits de error, log data. |
 | `integration/test_virtual_can_pipeline.py` | VirtualCanAdapter + bus python-can virtual "BMS" en el mismo canal (canal único por test): emulador envía → BMS recibe y decodifica; BMS pide 0x79 → recibe 0xB9; inject_fault BUS_OFF → errores contados y estado BUS_OFF; recuperación. |
 | `integration/test_gui_smoke.py` | `QT_QPA_PLATFORM=offscreen`; construye MainWindow con bus virtual, conecta, start/stop manual. |
 
-Fixtures (`conftest.py`): `FakeTimer` (avance manual; `sleep_until` avanza el reloj), `FakeCanPort` en `tests/fakes.py`
+Fixtures (`conftest.py`): `config` = `fakes.ALL_CHANNELS` (I, T y As activos, arranque 0 ms) para que los
+tests de planificación sean cortos; los defaults del datasheet se prueban aparte. `FakeTimer` (avance manual; `sleep_until` avanza el reloj), `FakeCanPort` en `tests/fakes.py`
 (registro de tramas enviadas, cola RX, inyección de fallos), `config`, `service`, `virtual_channel` único.
 
 ## 7. Orden / criterio de hecho

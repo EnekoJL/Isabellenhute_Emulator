@@ -10,11 +10,11 @@ can = pytest.importorskip("can")
 can_virtual = pytest.importorskip("isascale.infrastructure.adapters.can_virtual")
 VirtualCanAdapter = can_virtual.VirtualCanAdapter
 
-from fakes import FakeTimer, run_for  # noqa: E402
+from fakes import ALL_CHANNELS, FakeTimer, run_for  # noqa: E402
 
 from isascale.application.emulator_service import EmulatorService  # noqa: E402
 from isascale.domain import ivt_protocol as proto  # noqa: E402
-from isascale.domain.models import Bitrate, BusState, CANFrame, IVTConfig, ResultState  # noqa: E402
+from isascale.domain.models import Bitrate, BusState, CANFrame, ResultState  # noqa: E402
 from isascale.ports.can_port import CanConnectionError, CanTransmitError  # noqa: E402
 
 pytestmark = pytest.mark.integration
@@ -42,7 +42,7 @@ def fake_timer():
 
 @pytest.fixture
 def emulator(adapter, fake_timer):
-    return EmulatorService(adapter, fake_timer, IVTConfig())
+    return EmulatorService(adapter, fake_timer, ALL_CHANNELS)
 
 
 def drain(bus, timeout_s: float = 0.05) -> list[can.Message]:
@@ -63,7 +63,7 @@ def send_cmd(bms, *db):
 def test_bms_receives_and_decodes_current(emulator, bms, fake_timer):
     emulator.set_manual_current(35_000)
     emulator.start()
-    run_for(emulator, fake_timer, 18 * 0.02 - 0.001)
+    run_for(emulator, fake_timer, 18 * 0.02 + 0.001)
     msgs = drain(bms)
     assert msgs[0].arbitration_id == 0x511 and msgs[0].data[0] == 0xBF  # alive first
     current = by_id(msgs, 0x521)
@@ -76,6 +76,8 @@ def test_bms_receives_and_decodes_current(emulator, bms, fake_timer):
 
 
 def test_bms_device_id_request_answered(emulator, bms, fake_timer):
+    emulator.start()
+    drain(bms)
     send_cmd(bms, 0x79)
     emulator.tick()
     responses = by_id(drain(bms), 0x511)
@@ -131,7 +133,7 @@ def test_recovery_after_bus_off(emulator, adapter, bms, fake_timer):
 def test_inject_warning_keeps_sending(emulator, adapter, bms, fake_timer):
     emulator.start()
     adapter.inject_fault(BusState.WARNING)
-    run_for(emulator, fake_timer, 0.1)
+    run_for(emulator, fake_timer, 0.101)
     assert emulator.snapshot().bus_status.state is BusState.WARNING
     assert len(by_id(drain(bms), 0x521)) == 5
 
@@ -181,7 +183,7 @@ def test_real_time_worker_rate_and_bms_decode(virtual_channel, adapter, bms):
     worker_thread = pytest.importorskip("isascale.infrastructure.concurrency.worker_thread")
     precision_timer = pytest.importorskip("isascale.infrastructure.concurrency.precision_timer")
     timer = precision_timer.PrecisionTimer()
-    service = EmulatorService(adapter, timer)
+    service = EmulatorService(adapter, timer, ALL_CHANNELS)
     worker = worker_thread.TransmissionWorker(service, timer)
     service.set_manual_current(-120_000)
     service.set_state_flags(ResultState.OCS)

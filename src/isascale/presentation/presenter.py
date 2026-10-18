@@ -21,9 +21,12 @@ from isascale.domain.models import (
     BusState,
     BusStatus,
     CurrentProfile,
+    EMULATED_CHANNELS,
     IVTConfig,
     OperationMode,
     ResultState,
+    SensorSettings,
+    TriggerMode,
 )
 from isascale.ports.can_port import CanBusError, CanBusPort
 from isascale.ports.profile_port import ProfileFormatError
@@ -88,6 +91,7 @@ class EmulatorPresenter:
         self._last_error_shown = ""
         self._closed = False
         self._csv_choices: dict[str, str] = {}  # combo key -> label, CSVs loaded so far
+        self._shown_config: IVTConfig | None = None
 
     @property
     def active_mode(self) -> ActiveMode:
@@ -101,9 +105,7 @@ class EmulatorPresenter:
         The worker also serves BMS requests while stopped, so it lives as long as the view.
         """
         config = self._service.config
-        self._view.set_connection_form(
-            form_from_config(config), ConnectionOptions(BITRATE_OPTIONS, MIN_CYCLE_MS, MAX_CYCLE_MS)
-        )
+        self._push_connection_form()
         self._view.set_current_limit(int(config.nominal_range) * CURRENT_RANGE_FACTOR)
         choices = [ProfileChoice(key, factory().name) for key, factory in BUILTIN_PROFILES.items()]
         first = choices[0].key
@@ -111,6 +113,12 @@ class EmulatorPresenter:
         self.on_profile_selected(first)
         self._worker.start()
         self.on_refresh()
+
+    def _push_connection_form(self) -> None:
+        self._shown_config = self._service.config
+        self._view.set_connection_form(
+            form_from_config(self._shown_config), ConnectionOptions(BITRATE_OPTIONS, MIN_CYCLE_MS, MAX_CYCLE_MS)
+        )
 
     def on_close(self) -> None:
         if self._closed:
@@ -135,6 +143,7 @@ class EmulatorPresenter:
             config = config_from_form(self._service.config, form)
             self._service.stop()
             self._service.update_config(config)
+            self._shown_config = config
             self._can.connect(config.channel, config.bitrate)
         except USER_ERRORS as exc:
             self._view.show_error(f"Connect failed: {exc}")
@@ -243,6 +252,8 @@ class EmulatorPresenter:
             self._view.show_error(f"Snapshot failed: {exc}")
             return
         connected = self._can.is_connected
+        if self._service.config != self._shown_config:  # e.g. RESTART_to_Bitrate from the BMS
+            self._push_connection_form()
         self._view.show_controls(controls_vm(connected, snap.running))
         self._view.show_bus_status(bus_status_vm(snap.bus_status, snap.measured_current_rate_hz))
         self._view.show_telemetry(telemetry_vm(snap))
@@ -313,6 +324,8 @@ def telemetry_vm(snap: EmulatorSnapshot) -> TelemetryViewModel:
     reading = snap.reading
     if not snap.running:
         mode, mode_tone = "IDLE", Tone.DIM
+    elif snap.booting:
+        mode, mode_tone = "BOOT", Tone.WARNING
     elif snap.mode is OperationMode.RUN:
         mode, mode_tone = "RUN", Tone.OK
     else:
@@ -332,4 +345,23 @@ def telemetry_vm(snap: EmulatorSnapshot) -> TelemetryViewModel:
         state=" ".join(state_names),
         state_tone=Tone.WARNING if state else Tone.OK,
         source=f"{snap.source_name}{progress}",
+        channels=channels_text(snap.settings),
     )
+
+
+CHANNEL_NAMES = {0: "I", 4: "T", 6: "As"}
+
+
+def channels_text(settings: SensorSettings) -> str:
+    """Active result channels as the BMS configured them, e.g. 'I 20ms · T trig 5ms · As off'."""
+    parts = []
+    for mux in EMULATED_CHANNELS:
+        config = settings.channel(mux)
+        name = CHANNEL_NAMES[int(mux)]
+        if config.mode is TriggerMode.DISABLED:
+            parts.append(f"{name} off")
+            continue
+        kind = "" if config.mode is TriggerMode.CYCLIC else "trig "
+        extras = ("LE " if config.little_endian else "") + ("-x " if config.invert_sign else "")
+        parts.append(f"{name} {kind}{extras}{config.cycle_ms}ms")
+    return " · ".join(parts)

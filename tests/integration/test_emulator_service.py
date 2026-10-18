@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import pytest
-from fakes import FakeCanPort, FakeProfileReader, FakeTimer, run_for
+from fakes import FakeCanPort, FakeProfileReader, FakeTimer, cfg, run_for
 
 from isascale.application import emulator_service as svc_mod
 from isascale.application.emulator_service import EmulatorService
@@ -13,7 +13,6 @@ from isascale.domain import ivt_protocol as proto
 from isascale.domain.models import (
     BusState,
     CurrentProfile,
-    IVTConfig,
     NominalRange,
     OperationMode,
     ResultState,
@@ -55,7 +54,7 @@ def test_start_sends_alive_message_first(service, can_port):
 
 
 def test_alive_can_be_disabled(can_port, timer):
-    service = EmulatorService(can_port, timer, IVTConfig(send_alive_on_start=False))
+    service = EmulatorService(can_port, timer, cfg(send_alive_on_start=False))
     service.start()
     assert can_port.frames(RESP) == []
 
@@ -87,14 +86,14 @@ def test_stop_halts_transmission(service, can_port, timer):
 def test_update_config_while_running_raises(service):
     service.start()
     with pytest.raises(RuntimeError):
-        service.update_config(IVTConfig(current_period_ms=10))
+        service.update_config(cfg(current_period_ms=10))
 
 
 def test_update_config_while_stopped_applies_to_channels_and_requests(service, can_port, timer):
-    service.update_config(IVTConfig(current_period_ms=10, nominal_range=NominalRange.A300, temperature_enabled=False))
+    service.update_config(cfg(current_period_ms=10, nominal_range=NominalRange.A300, temperature_enabled=False))
     assert service.config.current_period_ms == 10
     service.start()
-    run_for(service, timer, 0.095)
+    run_for(service, timer, 0.105)  # first result one interval after start: 10, 20, ..., 100 ms
     assert len(can_port.frames(I)) == 10
     assert can_port.frames(T) == []
     can_port.push_rx(0x411, [0x79, 0, 0, 0, 0, 0, 0, 0])
@@ -107,19 +106,28 @@ def test_update_config_while_stopped_applies_to_channels_and_requests(service, c
 
 def test_default_periods_per_channel_are_exact(service, can_port, timer):
     service.start()
-    run_for(service, timer, 0.995)
-    assert len(can_port.frames(I)) == 50  # 20 ms
+    run_for(service, timer, 1.001)
+    assert len(can_port.frames(I)) == 50  # 20 ms: 20, 40, ..., 1000
     assert len(can_port.frames(T)) == 10  # 100 ms
-    assert len(can_port.frames(AS)) == 34  # 30 ms: 0, 30, ..., 990
+    assert len(can_port.frames(AS)) == 33  # 30 ms: 30, 60, ..., 990
     assert periods(can_port, I) == pytest.approx([0.020] * 49)
     assert periods(can_port, T) == pytest.approx([0.100] * 9)
-    assert periods(can_port, AS) == pytest.approx([0.030] * 33)
+    assert periods(can_port, AS) == pytest.approx([0.030] * 32)
+
+
+def test_first_result_comes_one_interval_after_start(service, can_port, timer):
+    t0 = timer.now()
+    service.start()
+    run_for(service, timer, 0.2)
+    assert can_port.times(I)[0] == pytest.approx(t0 + 0.020)
+    assert can_port.times(T)[0] == pytest.approx(t0 + 0.100)
+    assert can_port.times(AS)[0] == pytest.approx(t0 + 0.030)
 
 
 @pytest.mark.parametrize(("i_ms", "t_ms", "as_ms"), [(2, 100, 100), (10, 50, 25), (100, 100, 100), (7, 13, 99)])
 def test_configurable_periods(can_port, timer, i_ms, t_ms, as_ms):
     service = EmulatorService(
-        can_port, timer, IVTConfig(current_period_ms=i_ms, temperature_period_ms=t_ms, charge_period_ms=as_ms)
+        can_port, timer, cfg(current_period_ms=i_ms, temperature_period_ms=t_ms, charge_period_ms=as_ms)
     )
     service.start()
     run_for(service, timer, 0.9995)
@@ -130,12 +138,12 @@ def test_configurable_periods(can_port, timer, i_ms, t_ms, as_ms):
 
 @pytest.mark.parametrize(("t_on", "as_on"), [(False, False), (True, False), (False, True)])
 def test_disabled_channels_are_not_sent(can_port, timer, t_on, as_on):
-    service = EmulatorService(can_port, timer, IVTConfig(temperature_enabled=t_on, charge_enabled=as_on))
+    service = EmulatorService(can_port, timer, cfg(temperature_enabled=t_on, charge_enabled=as_on))
     service.start()
     run_for(service, timer, 0.5)
     assert bool(can_port.frames(T)) is t_on
     assert bool(can_port.frames(AS)) is as_on
-    assert len(can_port.frames(I)) == 25
+    assert len(can_port.frames(I)) == 24
 
 
 def test_tick_returns_next_deadline(service, timer):
@@ -150,7 +158,7 @@ def test_fall_behind_resyncs_instead_of_bursting(service, can_port, timer):
     timer.advance(0.5)  # worker stalled for 500 ms
     service.tick()
     service.tick()
-    assert len(can_port.frames(I)) == 2  # one catch-up frame, no burst of 25
+    assert len(can_port.frames(I)) == 1  # one catch-up frame, no burst of 25
     assert service.tick() == pytest.approx(timer.now() + 0.020)
 
 
@@ -175,7 +183,7 @@ def test_measured_rate_zero_before_two_frames_and_after_stop(service, timer):
 
 def test_counters_wrap_0xf_to_0x0_over_more_than_16_cycles(service, can_port, timer):
     service.start()
-    run_for(service, timer, 40 * 0.020 - 0.001)  # 40 I frames
+    run_for(service, timer, 40 * 0.020 + 0.001)  # 40 I frames
     assert counters(can_port, I) == [n % 16 for n in range(40)]
 
 
@@ -205,7 +213,7 @@ def test_counter_continues_after_wrap_across_stop_start_starts_fresh(service, ca
 def test_manual_current_35a_payload(service, can_port, timer):
     service.set_manual_current(35_000)
     service.start()
-    run_for(service, timer, 18 * 0.02 - 0.001)
+    run_for(service, timer, 18 * 0.02 + 0.001)
     frames = can_port.frames(I)
     assert len(frames) == 18
     for n, frame in enumerate(frames):
@@ -225,7 +233,7 @@ def test_manual_current_changes_in_real_time_without_time_reset(service, can_por
 def test_temperature_payload(service, can_port, timer):
     service.set_temperature(-12.34)
     service.start()
-    service.tick()
+    run_for(service, timer, 0.101)
     msg = decoded(can_port, T)[0]
     assert (msg.mux_id, msg.value) == (0x04, -123)
 
@@ -277,7 +285,7 @@ def test_charge_persists_across_stop_start_and_does_not_integrate_the_gap(servic
 def test_out_of_range_bit_only_above_nominal_range(service, can_port, timer):
     service.set_manual_current(1_000_000)  # exactly 1000 A nominal -> in range
     service.start()
-    service.tick()
+    run_for(service, timer, 0.021)
     assert decoded(can_port, I)[-1].state == ResultState.NONE
     service.set_manual_current(-1_000_001)
     run_for(service, timer, 0.021)
@@ -288,7 +296,7 @@ def test_out_of_range_bit_only_above_nominal_range(service, can_port, timer):
 def test_out_of_range_bit_is_only_on_current_channel(service, can_port, timer):
     service.set_manual_current(1_500_000)
     service.start()
-    service.tick()
+    run_for(service, timer, 0.101)
     assert decoded(can_port, I)[0].state & ResultState.OUT_OF_RANGE
     assert decoded(can_port, T)[0].state == ResultState.NONE
     assert decoded(can_port, AS)[0].state == ResultState.NONE
@@ -311,15 +319,15 @@ def test_injected_flags_combine_with_out_of_range(service, can_port, timer):
     service.set_state_flags(ResultState.OCS)
     service.set_manual_current(2_000_000)
     service.start()
-    service.tick()
+    run_for(service, timer, 0.021)
     assert decoded(can_port, I)[0].state == ResultState.OCS | ResultState.OUT_OF_RANGE
 
 
-def test_injected_flags_are_masked_to_4_bits(service, can_port):
+def test_injected_flags_are_masked_to_4_bits(service, can_port, timer):
     service.set_state_flags(ResultState(0xF))
     service.set_state_flags(0x1F)  # type: ignore[arg-type]
     service.start()
-    service.tick()
+    run_for(service, timer, 0.021)
     assert decoded(can_port, I)[0].state == ResultState(0xF)
 
 
@@ -332,11 +340,43 @@ def test_clearing_injected_flags(service, can_port, timer):
     assert decoded(can_port, I)[-1].state == ResultState.NONE
 
 
-def test_current_saturates_to_int32(service, can_port):
-    service.set_current_source(ConstantSource(1e12))
+@pytest.mark.parametrize(("current", "expected"), [(1e12, 12_200_000), (-1e12, -12_200_000), (13e6, 12_200_000)])
+def test_current_saturates_at_overcurrent_range(service, can_port, timer, current, expected):
+    service.set_current_source(ConstantSource(current))  # 1000 A variant: +-12200 A (datasheet 5.3)
     service.start()
-    service.tick()
-    assert decoded(can_port, I)[0].value == 2**31 - 1
+    run_for(service, timer, 0.041)
+    assert [m.value for m in decoded(can_port, I)] == [expected, expected]
+    assert decoded(can_port, I)[0].state & ResultState.OUT_OF_RANGE
+
+
+def test_out_of_range_has_5_percent_return_hysteresis(service, can_port, timer):
+    service.set_manual_current(1_100_000)
+    service.start()
+    run_for(service, timer, 0.021)
+    assert decoded(can_port, I)[-1].state & ResultState.OUT_OF_RANGE
+    service.set_manual_current(960_000)  # back in nominal range but above 95 %: still extended
+    run_for(service, timer, 0.02)
+    assert decoded(can_port, I)[-1].state & ResultState.OUT_OF_RANGE
+    service.set_manual_current(940_000)
+    run_for(service, timer, 0.02)
+    assert decoded(can_port, I)[-1].state == ResultState.NONE
+
+
+@pytest.mark.parametrize(("temperature", "out"), [(-40.0, False), (105.0, False), (-40.5, True), (106.0, True)])
+def test_temperature_out_of_spec_sets_bit1_on_t_result(service, can_port, timer, temperature, out):
+    service.set_temperature(temperature)
+    service.start()
+    run_for(service, timer, 0.101)
+    assert bool(decoded(can_port, T)[0].state & ResultState.OUT_OF_RANGE) is out
+    assert decoded(can_port, I)[0].state == ResultState.NONE
+
+
+def test_current_result_is_the_average_over_the_interval(service, can_port, timer):
+    service.set_current_source(ProfileSource(CurrentProfile("ramp", ((0.0, 0.0), (1.0, 100_000.0)))))
+    service.start()
+    run_for(service, timer, 0.101)
+    # 20 ms average of a 100 A/s ramp = value 10 ms before the end of the interval
+    assert [m.value for m in decoded(can_port, I)] == [1_000, 3_000, 5_000, 7_000, 9_000]
 
 
 # ------------------------------------------------------------ BMS requests
@@ -350,10 +390,11 @@ def test_get_device_id_request_is_answered(service, can_port):
     assert list(can_port.frames(RESP)[0].data) == [0xB9, 0x02, 0x3E, 0x80, 0x03, 0x01, 0x01, 0x00]
 
 
-def test_requests_answered_even_when_not_started(service, can_port):
+def test_powered_off_sensor_does_not_answer(service, can_port):
     can_port.push_rx(0x411, [0x7B, 0, 0, 0, 0, 0, 0, 0])
     service.tick()
-    assert list(can_port.frames(RESP)[0].data) == [0xBB, 0x00, 0x01, 0x23, 0x45, 0, 0, 0]
+    assert can_port.sent == []
+    assert not can_port.rx_queue  # drained, not left to pile up
 
 
 def test_set_mode_stop_stops_results_but_keeps_answering(service, can_port, timer):
@@ -391,8 +432,10 @@ def test_restart_resets_counters_and_sends_alive(service, can_port, timer):
     can_port.push_rx(0x411, [0x3F, 0, 0, 0, 0, 0, 0, 0])
     service.tick()
     assert can_port.sent[0].frame.data[0] == 0xBF
+    run_for(service, timer, 0.101)
     for can_id in (I, T, AS):
         assert counters(can_port, can_id)[0] == 0
+    assert service.device.system_errors.count(0x0F) == 1  # Error Reset Watchdog (datasheet 8.5)
 
 
 def test_restart_from_stop_returns_to_startup_run_mode(service, can_port, timer):
@@ -405,12 +448,16 @@ def test_restart_from_stop_returns_to_startup_run_mode(service, can_port, timer)
 
 
 def test_unknown_command_answered_with_0xff(service, can_port):
-    can_port.push_rx(0x411, [0x31, 0x01, 0, 0, 0, 0, 0, 0])
+    service.start()
+    can_port.clear()
+    can_port.push_rx(0x411, [0x37, 0x01, 0, 0, 0, 0, 0, 0])
     service.tick()
-    assert list(can_port.frames(RESP)[0].data) == [0xFF, 0x31, 0, 0, 0, 0, 0, 0]
+    assert list(can_port.frames(RESP)[0].data) == [0xFF, 0x37, 0, 0, 0, 0, 0, 0]
 
 
 def test_non_command_frames_ignored(service, can_port):
+    service.start()
+    can_port.clear()
     can_port.push_rx(0x123, [0x79])
     can_port.push_rx(0x521, [0x79, 0, 0, 0, 0, 0])
     service.tick()
@@ -419,6 +466,8 @@ def test_non_command_frames_ignored(service, can_port):
 
 
 def test_rx_drain_is_bounded_per_tick(service, can_port):
+    service.start()
+    can_port.clear()
     for _ in range(svc_mod.MAX_RX_PER_TICK + 4):
         can_port.push_rx(0x411, [0x79])
     service.tick()
@@ -428,10 +477,7 @@ def test_rx_drain_is_bounded_per_tick(service, can_port):
 
 
 def test_startup_mode_stop_start_sends_no_results(can_port, timer):
-    from isascale.application.bms_requests import HandleBmsRequestsUseCase
-
-    cfg = IVTConfig()
-    service = EmulatorService(can_port, timer, cfg, HandleBmsRequestsUseCase(cfg, startup_mode=OperationMode.STOP))
+    service = EmulatorService(can_port, timer, cfg(startup_mode=OperationMode.STOP))
     service.start()
     run_for(service, timer, 0.2)
     assert service.mode is OperationMode.STOP
@@ -446,7 +492,7 @@ def test_tx_errors_are_counted_not_raised(service, can_port, timer):
     can_port.tx_always_fail = True
     run_for(service, timer, 0.2)  # must not raise
     snap = service.snapshot()
-    assert snap.send_errors >= 10 + 2 + 7
+    assert snap.send_errors >= 9 + 1 + 6
     assert "TX" in snap.last_error
     assert snap.running
 
@@ -531,6 +577,12 @@ def test_reconnect_after_disconnect_resumes(service, can_port, timer):
     assert len(can_port.frames(I)) == 5
 
 
+def test_rx_error_while_powered_off_is_recorded_not_raised(service, can_port):
+    can_port.rx_error = CanTransmitError("rx while off")
+    service.tick()
+    assert service.snapshot().last_error == "rx while off"
+
+
 def test_rx_error_is_recorded_not_raised(service, can_port):
     service.start()
     can_port.rx_error = CanTransmitError("rx exploded")
@@ -567,7 +619,7 @@ def test_snapshot_fields(service, timer):
     assert snap.elapsed_s == pytest.approx(0.5)
     assert snap.reading.current_ma == 1234
     assert snap.reading.temperature_c == 31.5
-    assert snap.frames_sent == 1 + 25 + 5 + 17
+    assert snap.frames_sent == 1 + 24 + 4 + 16  # alive + I + T + As
     assert snap.bus_status.tx_count == snap.frames_sent
 
 
@@ -585,9 +637,12 @@ def test_profile_source_drives_current_from_activation_time(service, can_port, t
     service.set_current_source(ProfileSource(ramp))
     can_port.clear()
     run_for(service, timer, 1.2)
+    t_activation = timer.now() - 1.2
     values = [m.value for m in decoded(can_port, I)]
-    assert values[0] == 0
-    assert values[25] == pytest.approx(50_000, abs=1)  # 0.5 s into the profile
+    times = can_port.times(I)
+    assert values[0] == pytest.approx(100_000 * (times[0] - t_activation) / 2, abs=1)  # window straddles activation
+    for t, value in zip(times[1:30], values[1:30]):  # 20 ms average = ramp value 10 ms earlier
+        assert value == pytest.approx(100_000 * (t - t_activation - 0.010), abs=1)
     assert values[-1] == 100_000  # holds last value
     assert service.snapshot().source_progress == 1.0
     assert service.snapshot().source_name == "ramp"
@@ -606,7 +661,7 @@ def test_switch_profile_to_manual_and_back(service, can_port, timer, ramp):
     run_for(service, timer, 0.25)
     elapsed = can_port.times(I)[-1] - t_activation
     assert 0.2 < elapsed < 0.25
-    assert decoded(can_port, I)[-1].value == pytest.approx(100_000 * elapsed, abs=1)
+    assert decoded(can_port, I)[-1].value == pytest.approx(100_000 * (elapsed - 0.010), abs=1)
 
 
 def test_manual_use_case(service, can_port, timer):

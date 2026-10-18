@@ -11,7 +11,12 @@ from isascale.domain.models import (
     CurrentProfile,
     IVTConfig,
     MessageCounter,
+    ChannelConfig,
+    Mux,
     NominalRange,
+    OperationMode,
+    SensorSettings,
+    TriggerMode,
 )
 
 # -------------------------------------------------------------------- CANFrame
@@ -54,20 +59,28 @@ def test_ivtconfig_defaults_match_datasheet():
     cfg = IVTConfig()
     assert cfg.bitrate is Bitrate.B500K
     assert (cfg.current_period_ms, cfg.temperature_period_ms, cfg.charge_period_ms) == (20, 100, 30)
-    assert cfg.nominal_range is NominalRange.A1000
-    assert cfg.temperature_enabled and cfg.charge_enabled
+    assert cfg.nominal_range is NominalRange.A1000  # team sensor: IVT-S 1000 A
+    assert not cfg.temperature_enabled and not cfg.charge_enabled  # T, As disabled by default (8.1)
+    assert cfg.startup_time_ms == 400  # 5.1 re-/start-up time
+    assert cfg.startup_mode is OperationMode.RUN
 
 
 @pytest.mark.parametrize("field", ["current_period_ms", "temperature_period_ms", "charge_period_ms"])
-@pytest.mark.parametrize("value", [0, -1, 101, 1000])
-def test_ivtconfig_rejects_periods_outside_1_to_100_ms(field, value):
+@pytest.mark.parametrize("value", [0, -1, 65536])
+def test_ivtconfig_rejects_periods_outside_16_bit_ms(field, value):
     with pytest.raises(ValueError):
         IVTConfig(**{field: value})
 
 
 @pytest.mark.parametrize("field", ["current_period_ms", "temperature_period_ms", "charge_period_ms"])
-def test_ivtconfig_accepts_100_ms_upper_bound(field):
-    assert getattr(IVTConfig(**{field: 100}), field) == 100
+def test_ivtconfig_accepts_65535_ms_upper_bound(field):
+    assert getattr(IVTConfig(**{field: 65535}), field) == 65535  # Config Result DB2..3 (8.4)
+
+
+@pytest.mark.parametrize("value", [-1, 10_001])
+def test_ivtconfig_rejects_bad_startup_time(value):
+    with pytest.raises(ValueError):
+        IVTConfig(startup_time_ms=value)
 
 
 @pytest.mark.parametrize("field", ["temperature_period_ms", "charge_period_ms"])
@@ -88,7 +101,9 @@ def test_ivtconfig_accepts_exactly_1000_messages_per_second():
 
 
 def test_ivtconfig_total_rate_counts_only_enabled_channels():
-    assert IVTConfig().total_messages_per_s() == pytest.approx(50 + 10 + 1000 / 30)
+    assert IVTConfig(temperature_enabled=True, charge_enabled=True).total_messages_per_s() == pytest.approx(
+        50 + 10 + 1000 / 30
+    )
     assert IVTConfig(temperature_enabled=False, charge_enabled=False).total_messages_per_s() == 50
 
 
@@ -181,3 +196,29 @@ def test_profile_normalises_points_to_float():
 def test_profile_rejects_invalid_points(points):
     with pytest.raises(ValueError):
         CurrentProfile("bad", points)
+
+
+# ------------------------------------------------------- ChannelConfig / SensorSettings
+
+
+@pytest.mark.parametrize("cycle_ms", [0, 65536])
+def test_channel_config_rejects_cycle_outside_16_bit(cycle_ms):
+    with pytest.raises(ValueError):
+        ChannelConfig(TriggerMode.CYCLIC, cycle_ms)
+
+
+def test_sensor_settings_validation():
+    with pytest.raises(ValueError):
+        SensorSettings(channels=SensorSettings().channels[:7])
+    with pytest.raises(ValueError):
+        SensorSettings(command_id=0x800)
+    with pytest.raises(ValueError):
+        SensorSettings(response_id=0)
+
+
+def test_ivtconfig_to_settings_maps_periods_and_enables():
+    settings = IVTConfig(current_period_ms=5, temperature_enabled=True, charge_period_ms=40).to_settings()
+    assert settings.channel(Mux.I) == ChannelConfig(TriggerMode.CYCLIC, 5)
+    assert settings.channel(Mux.T) == ChannelConfig(TriggerMode.CYCLIC, 100)
+    assert settings.channel(Mux.AS) == ChannelConfig(TriggerMode.DISABLED, 40)
+    assert settings.channel(Mux.U1) == ChannelConfig(TriggerMode.CYCLIC, 60)  # datasheet default kept

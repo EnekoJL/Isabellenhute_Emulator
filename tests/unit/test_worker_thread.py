@@ -6,7 +6,7 @@ import threading
 import time
 
 import pytest
-from fakes import FakeCanPort, SleepTimer
+from fakes import ALL_CHANNELS, FakeCanPort, SleepTimer
 
 worker_thread = pytest.importorskip("isascale.infrastructure.concurrency.worker_thread")
 precision_timer = pytest.importorskip("isascale.infrastructure.concurrency.precision_timer")
@@ -150,7 +150,7 @@ def test_stop_without_start_is_safe(timer):
 def test_worker_drives_real_service_at_50hz():
     ptimer = PrecisionTimer()
     port = FakeCanPort(clock=ptimer, connected=True)
-    service = EmulatorService(port, ptimer)
+    service = EmulatorService(port, ptimer, ALL_CHANNELS)
     worker = TransmissionWorker(service, ptimer)
     service.start()
     worker.start()

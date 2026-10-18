@@ -47,6 +47,7 @@ class TelemetryPanel(QGroupBox):
         self._frames = self._value()
         self._state = self._value()
         self._source = self._value()
+        self._channels = self._value()
 
         cards = [
             ("Temperatura [°C]", self._temperature),
@@ -56,6 +57,7 @@ class TelemetryPanel(QGroupBox):
             ("Tramas / Errores", self._frames),
             ("Estado Sensor", self._state),
             ("Origen de Datos", self._source),
+            ("Canales activos (config. CAN)", self._channels),
         ]
 
         for i, (caption, widget) in enumerate(cards):
@@ -120,3 +122,4 @@ class TelemetryPanel(QGroupBox):
             f"font-family: {theme.MONO_FONT}; font-size: 13pt; font-weight: bold; color: {theme.color(vm.state_tone)};"
         )
         self._source.setText(vm.source)
+        self._channels.setText(vm.channels)

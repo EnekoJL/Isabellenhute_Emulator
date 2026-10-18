@@ -86,7 +86,7 @@ def build_app(args: argparse.Namespace) -> AppContext:
     config = IVTConfig(channel=str(args.channel), bitrate=Bitrate(int(args.bitrate)))
     can_port = make_can_port(args.interface)
     timer = PrecisionTimer()
-    request_handler = HandleBmsRequestsUseCase(config)
+    request_handler = HandleBmsRequestsUseCase()
     service = EmulatorService(can_port, timer, config, request_handler)
     reader = CsvProfileAdapter()
     return AppContext(

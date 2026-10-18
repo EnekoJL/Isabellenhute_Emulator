@@ -1,13 +1,28 @@
 # isascale-emulator
 
-Emulador por CAN del sensor de corriente **Isabellenhütte IVT-S variante U0** (solo corriente)
-para banco de potencia, HIL y telemetría de la moto eléctrica.
+Emulador por CAN del sensor de corriente **Isabellenhütte IVT-S 1000 A, variante U0** (solo
+corriente; el equipo usa el de 1000 A) para banco de potencia, HIL y telemetría de la moto eléctrica.
 
-Envía `0x521` (I, mA), `0x525` (T, 0,1 °C) y `0x527` (As) con contador de 4 bits por canal,
-el mensaje alive `0x511` al arrancar, y atiende los comandos de `0x411`
-(`0x79` DEVICE_ID → `0xB9`, `0x7B`, `0x74`, `0x34`, `0x3F`). Tiene modo manual y modo perfil (CSV o
-perfiles integrados WOT / regen / idle), estado de bus e inyección de fallos.
-Requisitos completos en [docs/REQUIREMENTS.md](docs/REQUIREMENTS.md).
+Se comporta como el sensor real (datasheet 1.03):
+
+* **Arranque:** 400 ms en silencio, después alive `0xBF` en `0x511` y el primer resultado un
+  intervalo más tarde. *Stop* en la GUI = sensor sin alimentación (no responde).
+* **Resultados:** por defecto solo `0x521` (I, mA) cada 20 ms; `0x525` (T, 0,1 °C) y `0x527` (As)
+  desactivados como en fábrica (se activan en la GUI o por CAN). Contador de 4 bits por canal.
+  El valor de I es la **media del intervalo**, saturada a ±12 200 A (rango de sobrecorriente);
+  bit 1 de estado en rango extendido (> 1000 A, vuelve por debajo de 950 A); bit 0 OCS según los
+  umbrales `0x35`/`0x36`; bits 2/3 según los contadores de error si el BMS activa el bit 5.
+* **Comandos `0x411`:** juego completo del capítulo 8: Set/Get CAN ID (`0x1n`/`0x5n`),
+  Config Result (`0x2n`/`0x6n`: modo off/triggered/cyclic, periodo 1–65535 ms, endianness, signo),
+  `0x30` reset errores/log (respuesta a 1,2 s), `0x31` TRIGGER, `0x32` STORE, `0x33`/`0x73` OC test,
+  `0x34`/`0x74` modo, `0x35`/`0x36`/`0x75`/`0x76` umbrales, `0x3A` reinicio a otro bitrate, `0x3D`
+  reinicio a fábrica, `0x3F` RESTART, `0x40`–`0x43` errores y log data, `0x79`/`0x7A`/`0x7B`/`0x7C`
+  identificación. Lo no definido → `0xFF`.
+* **Memoria:** los cambios por CAN valen hasta el siguiente reinicio salvo `STORE`; lo guardado
+  sobrevive a *Stop/Start*. Cada reinicio por comando suma un error de sistema *Reset Watchdog*.
+
+Tiene modo manual y modo perfil (CSV o perfiles integrados WOT / regen / idle), estado de bus e
+inyección de fallos. Requisitos completos en [docs/REQUIREMENTS.md](docs/REQUIREMENTS.md).
 
 ## Instalación
 
@@ -40,6 +55,9 @@ También se instala el comando `isascale-emulator`.
 
 Con `--interface virtual`, cualquier otro bus python-can `interface="virtual"` del mismo proceso y
 mismo canal ve las tramas (útil para scripts de prueba que hacen de BMS).
+
+En la GUI, *Canales activos (config. CAN)* muestra la configuración que el BMS haya dejado por CAN
+(p. ej. `I 20ms · T off · As off`); el formulario de conexión es lo "guardado" en el sensor.
 
 ## Tests
 

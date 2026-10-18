@@ -7,10 +7,22 @@ from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
 
-from isascale.domain.models import Bitrate, BusState, BusStatus, CANFrame, CurrentProfile
+from isascale.domain.models import Bitrate, BusState, BusStatus, CANFrame, CurrentProfile, IVTConfig
 from isascale.ports.can_port import CanBusError, CanBusPort, CanConnectionError, CanTransmitError
 from isascale.ports.profile_port import ProfileFormatError, ProfileReaderPort
 from isascale.ports.timer_port import TimerPort
+
+
+# All three channels on, no start-up delay: keeps the scheduling tests short.
+# The datasheet defaults (T/As off, 400 ms start-up) are tested on their own.
+ALL_CHANNELS = IVTConfig(temperature_enabled=True, charge_enabled=True, startup_time_ms=0)
+
+
+def cfg(**changes) -> IVTConfig:
+    """ALL_CHANNELS with some fields changed."""
+    from dataclasses import replace
+
+    return replace(ALL_CHANNELS, **changes)
 
 
 class FakeTimer(TimerPort):

@@ -71,6 +71,7 @@ class TelemetryViewModel:
     state: str
     state_tone: Tone
     source: str
+    channels: str = ""
 
 
 @dataclass(frozen=True)

@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 
 import pytest
-from fakes import FakeCanPort, FakeTimer
+from fakes import ALL_CHANNELS, FakeCanPort, FakeTimer
 
 from isascale.application.emulator_service import EmulatorService
 from isascale.domain.models import IVTConfig
@@ -23,7 +23,7 @@ def can_port(timer: FakeTimer) -> FakeCanPort:
 
 @pytest.fixture
 def config() -> IVTConfig:
-    return IVTConfig()
+    return ALL_CHANNELS
 
 
 @pytest.fixture

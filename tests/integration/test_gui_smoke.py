@@ -104,7 +104,7 @@ def test_connect_start_stop_manual(window, ctx, qapp, bms):
 
     window.current_control.set_current_a(35.0)
     window.start_manual_button.click()
-    pump(qapp, 0.4)
+    pump(qapp, 0.8)  # 400 ms start-up (datasheet 5.1), then results
     assert ctx.service.running
     msgs = [m for m in drain(bms) if m.arbitration_id == 0x521]
     assert len(msgs) >= 10
@@ -124,7 +124,7 @@ def test_builtin_profile_start(window, ctx, qapp, bms):
     assert ctx.profile_uc.profile is not None  # presenter pre-selects a built-in profile
     window.start_profile_button.click()
     assert ctx.service.running
-    pump(qapp, 0.3)
+    pump(qapp, 0.7)
     assert ctx.service.snapshot().source_progress is not None
     assert [m for m in drain(bms) if m.arbitration_id == 0x521]
 
@@ -133,7 +133,7 @@ def test_bus_off_is_shown_and_gui_survives(window, ctx, qapp):
     connect(window, qapp)
     window.start_manual_button.click()
     ctx.can_port.inject_fault(BusState.BUS_OFF)
-    pump(qapp, 0.3)
+    pump(qapp, 0.7)
     assert window.status_indicator.state_text == BusState.BUS_OFF.value
     assert ctx.service.snapshot().send_errors > 0
     ctx.can_port.inject_fault(None)
