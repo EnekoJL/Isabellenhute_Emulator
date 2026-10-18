@@ -1,7 +1,7 @@
 # isascale-emulator
 
-Emulador por CAN del sensor de corriente **Isabellenhütte IVT-S 1000 A, variante U0** (solo
-corriente; el equipo usa el de 1000 A) para banco de potencia, HIL y telemetría de la moto eléctrica.
+Emulador por CAN del sensor de corriente **Isabellenhütte IVT-S-1K-U0-I-CAN1-12/24** (1000 A,
+solo corriente, CAN1; la variante exacta del equipo, material 164513) para banco de potencia, HIL y telemetría de la moto eléctrica.
 
 Se comporta como el sensor real (datasheet 1.03):
 

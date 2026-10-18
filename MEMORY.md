@@ -8,8 +8,10 @@ Update this file in the same commit as every change (see `CLAUDE.md` §0).
 
 * **Last update:** 2026-10-18 (Claude). Datasheet-accuracy review applied
   (commit "feat: behave like the real IVT-S").
-* **Sensor of the team:** IVT-S **1000 A** (user, 2026-10-18). U0/U3 and CAN1/CAN2
-  not confirmed; the emulator is U0 + CAN1 (`DEVICE_ID` = `B9 02 3E 80 03 01 01 00`).
+* **Sensor of the team:** **IVT-S-1K-U0-I-CAN1-12/24**, material number 164513, 2 units
+  (delivery note 80703759/10, 2024-05-03; user, 2026-10-18). Exactly the emulated
+  variant: 1000 A, no voltage channels, CAN1 (terminated), 12/24 V
+  (`DEVICE_ID` = `B9 02 3E 80 03 01 01 00`).
   1000 A implies: overcurrent range ±12 200 A (results saturate there), extended
   range above 1000 A (state bit 1, back below 950 A), resolution 47 mA, offset
   125 mA, noise 70 mA RMS (noise/offset not emulated).
@@ -58,7 +60,8 @@ Update this file in the same commit as every change (see `CLAUDE.md` §0).
 
 * Validate the D-7 assumptions with the real sensor on the bench (Set CAN ID timing,
   bit 3 after restart, STORE time, start-up time) and read its real `DEVICE_ID`,
-  `SW_VERSION`, `ARTICLE_NUMBER` and variant (U0/U3, CAN1/CAN2).
+  `SW_VERSION` and `ARTICLE_NUMBER` (maybe the material number 164513; encoding
+  unknown, so the placeholder stays 0 until read from the sensor).
 * Optional realism, not done: measurement noise/offset/resolution (47 mA in the
   nominal range, 376 mA in the extended range for 1000 A); temperature-driven
   system errors (≥ 105 °C / ≤ −40 °C); U3 variant (U1..U3, W, Wh results).

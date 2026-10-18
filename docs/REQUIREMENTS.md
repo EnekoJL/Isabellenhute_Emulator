@@ -53,7 +53,7 @@ Convención de signo: **+ = descarga** (batería → motor), **− = carga** (re
 | D-1 | Petición de identificación = `0x79` (GET_DEVICE_ID); `0xB9` es la **respuesta**. | **Confirmado por el usuario 2026-10-08: seguir el datasheet.** |
 | D-2 | ~~T y As activados por defecto~~ → **defaults del datasheet** (solo I). Se activan en la GUI o por CAN. | Usuario 2026-10-18: "que se parezca lo máximo posible al sensor real". |
 | D-3 | ~~Solo F-09 reducido~~ → juego completo de comandos del capítulo 8. | Ídem. |
-| D-4 | Rango nominal 1000 A (IVT-S-1K-U0-I-CAN1). | **Confirmado por el usuario 2026-10-18: el equipo tiene el de 1000 A.** U0/U3 y CAN1/CAN2 sin confirmar. |
+| D-4 | Variante IVT-S-1K-U0-I-CAN1-12/24 (1000 A, sin tensión, CAN1 con terminación). | **Confirmado por el usuario 2026-10-18** (albarán: material 164513, 2 unidades). |
 | D-5 | GUI con PySide6 (LGPL) en lugar de PyQt6 (GPL/comercial). | Licencia más cómoda para uso en empresa. |
 | D-6 | Perfiles integrados son estímulos representativos, no datos medidos. | Sustituir por CSV reales de la moto cuando existan. |
 | D-7 | Supuestos donde el datasheet no dice nada: Set CAN ID se aplica al momento (en STOP); `0x3D` no cambia el bitrate; STORE responde a los 200 ms; OCS se libera por debajo del umbral de reset (o del de set si reset = 0); serie que no coincide = silencio; `SW_VERSION` y `ARTICLE_NUMBER` son valores de relleno. | Revisar con el sensor real. |
@@ -63,6 +63,6 @@ Convención de signo: **+ = descarga** (batería → motor), **− = carga** (re
 
 - Supuestos de D-7 (sobre todo si Set CAN ID se aplica al momento o tras STORE + reinicio).
 - Si el bit 3 aparece tras cada reinicio con el bit 5 activado (nota "Error Reset Watchdog" del datasheet).
-- Variante exacta del equipo (U0/U3, CAN1/CAN2) y valores reales de DEVICE_ID, SW_VERSION y ARTICLE_NUMBER.
+- Valores reales de DEVICE_ID, SW_VERSION y ARTICLE_NUMBER (¿el material 164513?) leídos del sensor.
 - Tiempo real de arranque (350–400 ms) y de respuesta de STORE.
 - Jitter real con IXXAT USB-to-CAN en Windows.
