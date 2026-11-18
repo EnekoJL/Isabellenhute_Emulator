@@ -18,7 +18,7 @@ from typing import Callable, Iterator, Mapping
 
 from isascale.domain import ivt_commands as cmd
 from isascale.domain import ivt_protocol as proto
-from isascale.domain.models import CANFrame, ChannelConfig, Mux, OperationMode, TriggerMode
+from isascale.domain.models import MAX_TOTAL_MESSAGES_PER_S, CANFrame, ChannelConfig, Mux, OperationMode, TriggerMode
 from isascale.ports.can_port import CanBusPort
 
 RESPONSE_TIMEOUT_S = 1.0
@@ -38,19 +38,43 @@ class SensorProfile:
     channels: Mapping[Mux, ChannelConfig]
     error_mask_reporting: bool
 
+    def __post_init__(self) -> None:
+        if self.messages_per_s() > MAX_TOTAL_MESSAGES_PER_S:
+            raise ValueError(
+                f"{self.messages_per_s():.0f} result messages/s, the sensor allows "
+                f"{MAX_TOTAL_MESSAGES_PER_S} (datasheet 8.1)"
+            )
 
-# What the AMS firmware reads (AMS repo, docs/architecture/CAN_Protocol.md §4): current
-# every 20 ms (factory value), sensor temperature every 1 s, charge counter every 100 ms,
-# measurement / system errors reported in IVT_Result_state bits 2 and 3. Big endian, sign
-# as the sensor measures it (the firmware fixes the direction, board test E-2).
-AMS_PROFILE = SensorProfile(
-    channels={
-        Mux.I: ChannelConfig(TriggerMode.CYCLIC, 20),
-        Mux.T: ChannelConfig(TriggerMode.CYCLIC, 1000),
-        Mux.AS: ChannelConfig(TriggerMode.CYCLIC, 100),
-    },
-    error_mask_reporting=True,
-)
+    def messages_per_s(self) -> float:
+        """Result messages per second of the cyclic channels in this profile."""
+        return sum(1000.0 / c.cycle_ms for c in self.channels.values() if c.mode is TriggerMode.CYCLIC)
+
+
+# What the AMS firmware expects (AMS repo, docs/architecture/CAN_Protocol.md §4). The
+# firmware's pack_current freshness (100 ms) assumes the current every 20 ms.
+AMS_CURRENT_MS = 20
+AMS_TEMPERATURE_MS = 1000
+AMS_CHARGE_MS = 100
+
+
+def ams_profile(
+    current_ms: int = AMS_CURRENT_MS, temperature_ms: int = AMS_TEMPERATURE_MS, charge_ms: int = AMS_CHARGE_MS
+) -> SensorProfile:
+    """I, T and As cyclic at the given periods, measurement / system errors reported in
+    IVT_Result_state bits 2 and 3. Big endian, sign as the sensor measures it (the firmware
+    fixes the direction, board test E-2). ValueError on a period outside 1..65535 ms or
+    more than 1000 messages/s."""
+    return SensorProfile(
+        channels={
+            Mux.I: ChannelConfig(TriggerMode.CYCLIC, current_ms),
+            Mux.T: ChannelConfig(TriggerMode.CYCLIC, temperature_ms),
+            Mux.AS: ChannelConfig(TriggerMode.CYCLIC, charge_ms),
+        },
+        error_mask_reporting=True,
+    )
+
+
+AMS_PROFILE = ams_profile()
 
 
 @dataclass(frozen=True)

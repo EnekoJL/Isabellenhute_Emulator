@@ -15,8 +15,9 @@ Update this file in the same commit as every change (see `CLAUDE.md` §0).
   1000 A implies: overcurrent range ±12 200 A (results saturate there), extended
   range above 1000 A (state bit 1, back below 950 A), resolution 47 mA, offset
   125 mA, noise 70 mA RMS (noise/offset not emulated).
+* **2026-11-18: configurator periods configurable** (user: «que no sea hardcoded»): `ams_profile(current_ms, temperature_ms, charge_ms)` (defaults 20 / 1000 / 100 = what the AMS firmware expects, `AMS_PROFILE` = defaults), `SensorProfile` refuses > 1000 msg/s (datasheet 8.1), CLI `apply-ams --current-ms --temperature-ms --charge-ms` (bad values → exit 2 before connecting; warning when I ≠ 20 ms). 651 pytest.
 * **2026-11-18: configurator `isascale-configure`** (AMS user: «quiero el Ah counter y el de temperatura»): client side of the protocol in pure `domain/ivt_commands.py`, `application/sensor_configurator.py` (`SensorConfigurator`: `read_identity`, `read_settings`, `apply_profile`, `reset_log_since_reset`; STOP only inside a context manager that always returns to RUN; every command waits for its own response, skips results), `AMS_PROFILE` (I 20 ms, T 1 s, As 100 ms cyclic, error bits on), CLI `configurator_cli.py` (`info`, `apply-ams`, `reset-log --yes`). Tested against the emulator's own command handler (`fakes.EmulatedSensorPort`) and end to end on the virtual bus with the emulator thread. REQUIREMENTS F-20, D-9.
-* **Tests:** 640 pytest, all passing (2026-11-18, + configurator); before: 596 (2026-11-18: + `tests/unit/test_ams_firmware_contract.py`, the same 0x521 golden frames the AMS firmware decodes in `AMS_ivt_parser`); `domain/` and `application/` 100 % lines.
+* **Tests:** 651 pytest, all passing (2026-11-18, + configurable periods); 640 with the configurator; before: 596 (2026-11-18: + `tests/unit/test_ams_firmware_contract.py`, the same 0x521 golden frames the AMS firmware decodes in `AMS_ivt_parser`); `domain/` and `application/` 100 % lines.
 * **Behaviour now modelled (datasheet 1.03):**
   * Power on = 400 ms silent → alive `0xBF` → first result one interval later.
     GUI Stop = power off (no answers, RX drained).

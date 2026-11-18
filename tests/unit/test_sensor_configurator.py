@@ -11,6 +11,7 @@ from isascale.application.sensor_configurator import (
     ConfiguratorError,
     SensorConfigurator,
     SensorProfile,
+    ams_profile,
 )
 from isascale.domain import ivt_protocol as proto
 from isascale.domain.ivt_commands import ChannelSetting, DeviceId
@@ -143,3 +144,36 @@ def test_reset_log_since_reset_clears_it_and_restarts(configurator, port):
     assert port.device.mode is RUN
     assert port.commands() == [0x7B, 0x34, 0x30, 0x34]
     assert port.sent[2].frame.data[3:7] == bytes([0x0A, 0x0B, 0x0C, 0x0D])
+
+
+# --- ams_profile: periods chosen by the user ------------------------------------------
+
+
+def test_ams_profile_defaults_match_what_the_firmware_expects():
+    assert ams_profile() == AMS_PROFILE
+    assert {mux: c.cycle_ms for mux, c in AMS_PROFILE.channels.items()} == {Mux.I: 20, Mux.T: 1000, Mux.AS: 100}
+    assert AMS_PROFILE.error_mask_reporting
+    assert AMS_PROFILE.messages_per_s() == pytest.approx(50 + 1 + 10)
+
+
+def test_ams_profile_with_other_periods_is_applied(configurator, port):
+    configurator.apply_profile(ams_profile(current_ms=10, temperature_ms=500, charge_ms=1000))
+    stored = port.device.stored
+    assert (stored.channel(Mux.I).cycle_ms, stored.channel(Mux.T).cycle_ms, stored.channel(Mux.AS).cycle_ms) == (
+        10,
+        500,
+        1000,
+    )
+
+
+@pytest.mark.parametrize("periods", [(0, 1000, 100), (20, 70000, 100), (20, 1000, -1)])
+def test_ams_profile_rejects_periods_outside_16_bits(periods):
+    with pytest.raises(ValueError):
+        ams_profile(*periods)
+
+
+def test_profile_above_1000_messages_per_second_is_refused():
+    with pytest.raises(ValueError, match="1000"):
+        ams_profile(current_ms=1, temperature_ms=1000, charge_ms=100)  # 1000 + 1 + 10 msg/s
+    disabled = SensorProfile({Mux.I: ChannelConfig(TriggerMode.DISABLED, 1)}, error_mask_reporting=False)
+    assert disabled.messages_per_s() == 0

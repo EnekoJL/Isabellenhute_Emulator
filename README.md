@@ -68,6 +68,7 @@ exige modo STOP (el sensor deja de medir), siempre lo devuelve a RUN al terminar
 ```bash
 python -m isascale.configurator_cli --interface ixxat info              # identidad + canales, no cambia nada
 python -m isascale.configurator_cli --interface ixxat apply-ams         # perfil del AMS + STORE + verificación
+python -m isascale.configurator_cli --interface ixxat apply-ams --current-ms 20 --temperature-ms 500 --charge-ms 200
 python -m isascale.configurator_cli --interface ixxat reset-log --yes   # borra el log "desde reset"
 ```
 
@@ -79,7 +80,12 @@ Perfil del AMS (`AMS_PROFILE`, lo que lee el firmware: `AMS_GitHub/docs/architec
 | T | `0x525` | cíclico | 1000 ms |
 | As | `0x527` | cíclico | 100 ms |
 
-más el **bit 5** de Config Result (bits 2/3 de error en `IVT_Result_state`; de fábrica están
+Los tres periodos son los valores por defecto: se cambian con `--current-ms`,
+`--temperature-ms` y `--charge-ms` (1–65535 ms, y en total ≤ 1000 mensajes/s,
+datasheet 8.1; si no, error antes de conectar). Si la corriente no va a 20 ms
+avisa: el firmware da `pack_current` por caducado a los 100 ms.
+
+Además, el **bit 5** de Config Result (bits 2/3 de error en `IVT_Result_state`; de fábrica están
 apagados). Big endian y signo sin invertir (el firmware fija el sentido en la prueba E-2).
 
 `reset-log` borra el log *desde reset* (`0x30`, DB1 = 2, con el número de serie). El log *overall*

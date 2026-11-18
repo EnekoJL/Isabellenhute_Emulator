@@ -24,6 +24,8 @@ def run(port, *argv: str) -> tuple[int, list[str]]:
 def test_parse_args_defaults():
     args = cli.parse_args(["info"])
     assert (args.action, args.channel, args.bitrate) == ("info", "0", int(Bitrate.B500K))
+    args = cli.parse_args(["apply-ams"])
+    assert (args.current_ms, args.temperature_ms, args.charge_ms) == (20, 1000, 100)
 
 
 def test_parse_args_needs_an_action():
@@ -49,6 +51,36 @@ def test_apply_ams_writes_stores_and_shows_the_result(port):
     assert "  AS  CYCLIC      100 ms" in lines
     assert lines[-1] == "  error bits in result state: on"
     assert port.device.stored.channel(Mux.AS).mode is TriggerMode.CYCLIC
+
+
+def test_apply_ams_with_custom_periods(port):
+    code, lines = run(port, "apply-ams", "--current-ms", "10", "--temperature-ms", "500", "--charge-ms", "250")
+    assert code == 0
+    assert "  I   CYCLIC       10 ms" in lines
+    assert "  AS  CYCLIC      250 ms" in lines
+    assert any(line.startswith("warning: the AMS firmware expects the current every 20 ms") for line in lines)
+    assert port.device.stored.channel(Mux.T).cycle_ms == 500
+
+
+def test_apply_ams_defaults_give_no_firmware_warning(port):
+    code, lines = run(port, "apply-ams")
+    assert code == 0
+    assert not any(line.startswith("warning") for line in lines)
+
+
+def test_firmware_warning_says_always_stale_above_100_ms():
+    from isascale.application.sensor_configurator import ams_profile
+
+    assert "always read stale" in cli.firmware_warnings(ams_profile(current_ms=200))[0]
+    assert "always read stale" not in cli.firmware_warnings(ams_profile(current_ms=50))[0]
+
+
+@pytest.mark.parametrize("periods", [("--current-ms", "0"), ("--current-ms", "1")])
+def test_invalid_periods_are_exit_2_before_connecting(port, periods):
+    code, lines = run(port, "apply-ams", *periods)
+    assert code == 2
+    assert lines[0].startswith("error:")
+    assert port.connect_calls == 0
 
 
 def test_reset_log_needs_yes(port):
