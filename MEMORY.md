@@ -15,7 +15,7 @@ Update this file in the same commit as every change (see `CLAUDE.md` §0).
   1000 A implies: overcurrent range ±12 200 A (results saturate there), extended
   range above 1000 A (state bit 1, back below 950 A), resolution 47 mA, offset
   125 mA, noise 70 mA RMS (noise/offset not emulated).
-* **Tests:** 592 pytest, all passing; `domain/` and `application/` 100 % lines.
+* **Tests:** 596 pytest, all passing (2026-11-18: + `tests/unit/test_ams_firmware_contract.py`, the same 0x521 golden frames the AMS firmware decodes in `AMS_ivt_parser`); `domain/` and `application/` 100 % lines.
 * **Behaviour now modelled (datasheet 1.03):**
   * Power on = 400 ms silent → alive `0xBF` → first result one interval later.
     GUI Stop = power off (no answers, RX drained).
