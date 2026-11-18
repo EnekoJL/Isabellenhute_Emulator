@@ -21,10 +21,13 @@ Regla: solo `infrastructure/` importa `can`, `pandas`, `numpy`. Solo `presentati
 pyproject.toml  README.md  docs/
 src/isascale/
   __init__.py  __main__.py  bootstrap.py
+  configurator_cli.py   raíz de composición de isascale-configure (F-20)
   domain/        models.py  ivt_protocol.py  accumulator.py
+                 ivt_commands.py (lado BMS: comandos + decodificar respuestas)
                  sensor_state.py (contadores de error, log data, OCS, rango)  [HECHO]
   ports/         can_port.py  profile_port.py  timer_port.py         [HECHO - arquitecto]
   application/   emulator_service.py  use_cases.py  bms_requests.py
+                 sensor_configurator.py (SensorConfigurator, AMS_PROFILE)
                  sources.py  builtin_profiles.py                      [HECHO - arquitecto]
   infrastructure/
     adapters/    can_python_can.py  can_ixxat.py  can_virtual.py  csv_reader.py   [developer]
@@ -132,6 +135,10 @@ Headless: conecta, arranca, imprime snapshot cada 1 s, Ctrl+C → stop + disconn
 | `integration/test_emulator_service.py` | Con FakeTimer + fake CanBusPort: periodos exactos por canal, contador por canal con wrap, OUT_OF_RANGE, flags inyectados, STOP/RUN, RESTART, cambio manual↔perfil, fallo de bus (cuenta errores, no lanza, recupera), start sin conexión → CanConnectionError, update_config en marcha → RuntimeError. |
 | `integration/test_sensor_behaviour.py` | Arranque 400 ms, reinicios, STORE/RESTART/fábrica/bitrate, reconfiguración por CAN, endianness/signo, TRIGGER, OCS, bits de error, log data. |
 | `integration/test_virtual_can_pipeline.py` | VirtualCanAdapter + bus python-can virtual "BMS" en el mismo canal (canal único por test): emulador envía → BMS recibe y decodifica; BMS pide 0x79 → recibe 0xB9; inject_fault BUS_OFF → errores contados y estado BUS_OFF; recuperación. |
+| `unit/test_ivt_commands.py` | Bytes literales de cada comando del configurador (datasheet 8); decodificar Config Result / modo / STORE / serie / versión / DEVICE_ID contra los codificadores del propio emulador; `0xFF` solo para su comando. |
+| `unit/test_sensor_configurator.py` | `SensorConfigurator` contra `EmulatedSensorPort` (`fakes.py`: el `HandleBmsRequestsUseCase` real detrás de un puerto falso, reloj falso): identidad, ajustes de fábrica, perfil AMS guardado y orden de comandos, espera del STORE, ruido en el bus, sensor que no para / no aplica / rechaza / no responde / relectura distinta, siempre vuelve a RUN, `reset-log` con el número de serie. |
+| `unit/test_configurator_cli.py` | Argumentos, salida y códigos 0/1/2, `--yes`, desconexión al terminar. |
+| `integration/test_configurator_virtual_bus.py` | Emulador completo en su hilo (tiempo real) + configurador en otro bus virtual: `apply-ams` → guardado, RUN, llegan `0x521`, `0x525` y `0x527`. |
 | `integration/test_gui_smoke.py` | `QT_QPA_PLATFORM=offscreen`; construye MainWindow con bus virtual, conecta, start/stop manual. |
 
 Fixtures (`conftest.py`): `config` = `fakes.ALL_CHANNELS` (I, T y As activos, arranque 0 ms) para que los

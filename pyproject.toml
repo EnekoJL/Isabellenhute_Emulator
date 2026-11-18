@@ -20,6 +20,7 @@ dev = ["pytest>=8", "pytest-mock>=3.12", "pytest-cov>=5"]
 
 [project.scripts]
 isascale-emulator = "isascale.__main__:main"
+isascale-configure = "isascale.configurator_cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

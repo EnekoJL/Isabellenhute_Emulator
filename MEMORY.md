@@ -15,7 +15,8 @@ Update this file in the same commit as every change (see `CLAUDE.md` §0).
   1000 A implies: overcurrent range ±12 200 A (results saturate there), extended
   range above 1000 A (state bit 1, back below 950 A), resolution 47 mA, offset
   125 mA, noise 70 mA RMS (noise/offset not emulated).
-* **Tests:** 596 pytest, all passing (2026-11-18: + `tests/unit/test_ams_firmware_contract.py`, the same 0x521 golden frames the AMS firmware decodes in `AMS_ivt_parser`); `domain/` and `application/` 100 % lines.
+* **2026-11-18: configurator `isascale-configure`** (AMS user: «quiero el Ah counter y el de temperatura»): client side of the protocol in pure `domain/ivt_commands.py`, `application/sensor_configurator.py` (`SensorConfigurator`: `read_identity`, `read_settings`, `apply_profile`, `reset_log_since_reset`; STOP only inside a context manager that always returns to RUN; every command waits for its own response, skips results), `AMS_PROFILE` (I 20 ms, T 1 s, As 100 ms cyclic, error bits on), CLI `configurator_cli.py` (`info`, `apply-ams`, `reset-log --yes`). Tested against the emulator's own command handler (`fakes.EmulatedSensorPort`) and end to end on the virtual bus with the emulator thread. REQUIREMENTS F-20, D-9.
+* **Tests:** 640 pytest, all passing (2026-11-18, + configurator); before: 596 (2026-11-18: + `tests/unit/test_ams_firmware_contract.py`, the same 0x521 golden frames the AMS firmware decodes in `AMS_ivt_parser`); `domain/` and `application/` 100 % lines.
 * **Behaviour now modelled (datasheet 1.03):**
   * Power on = 400 ms silent → alive `0xBF` → first result one interval later.
     GUI Stop = power off (no answers, RX drained).
@@ -58,6 +59,7 @@ Update this file in the same commit as every change (see `CLAUDE.md` §0).
 
 ## 4. Next steps
 
+* Run `isascale-configure --interface ixxat apply-ams` on the team's real IVT-S (AMS board test E-2), then `info`; check whether `reset-log` zeroes the `0x527` As result and what As does after a power cut (stored every 15 min).
 * Validate the D-7 assumptions with the real sensor on the bench (Set CAN ID timing,
   bit 3 after restart, STORE time, start-up time) and read its real `DEVICE_ID`,
   `SW_VERSION` and `ARTICLE_NUMBER` (maybe the material number 164513; encoding

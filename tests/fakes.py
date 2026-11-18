@@ -183,3 +183,55 @@ def run_for(service, timer: FakeTimer, duration_s: float) -> int:
             timer.sleep_until(end)
             return ticks
         timer.sleep_until(deadline)
+
+
+class EmulatedSensorPort(FakeCanPort):
+    """CanBusPort with an emulated IVT-S behind it, for testing the configurator without threads.
+
+    Every command sent is answered at once by the emulator's own command handler
+    (HandleBmsRequestsUseCase on a DeviceState); delayed responses are queued and the
+    clock jumps by their delay. receive_frame() on an empty queue advances the clock by
+    the timeout, so a silent sensor times out instantly.
+
+    Fault injection:
+      - silent: commands get no answer.
+      - rewrite: callable(Response frame) -> frame, applied to every response.
+      - noise: frames queued before every answer (results, unrelated responses).
+    """
+
+    def __init__(self, device=None, connected: bool = True) -> None:
+        from isascale.application.bms_requests import DeviceState, HandleBmsRequestsUseCase
+        from isascale.domain.models import NominalRange
+
+        self.clock = FakeTimer(start=10.0)
+        super().__init__(clock=self.clock, connected=connected)
+        settings = IVTConfig().to_settings()
+        self.device = device or DeviceState(0x0A0B0C0D, NominalRange.A1000, Bitrate.B500K, settings, settings)
+        self._handler = HandleBmsRequestsUseCase()
+        self.silent = False
+        self.rewrite = None
+        self.noise: list[CANFrame] = []
+
+    def send_frame(self, frame: CANFrame) -> None:
+        super().send_frame(frame)
+        if self.silent:
+            return
+        outcome = self._handler.handle(frame, self.device, self.clock.now())
+        if outcome is None:
+            return
+        self.rx_queue.extend(self.noise)
+        answers = list(outcome.responses)
+        for delay_s, delayed in outcome.delayed:
+            self.clock.advance(delay_s)
+            answers.append(delayed)
+        self.rx_queue.extend(self.rewrite(f) if self.rewrite else f for f in answers)
+
+    def receive_frame(self, timeout_s: float = 0.0) -> CANFrame | None:
+        frame = super().receive_frame(timeout_s)
+        if frame is None:
+            self.clock.advance(timeout_s)
+        return frame
+
+    def commands(self) -> list[int]:
+        """DB0 of every command sent, in order."""
+        return [s.frame.data[0] for s in self.sent]

@@ -59,6 +59,36 @@ mismo canal ve las tramas (útil para scripts de prueba que hacen de BMS).
 En la GUI, *Canales activos (config. CAN)* muestra la configuración que el BMS haya dejado por CAN
 (p. ej. `I 20ms · T off · As off`); el formulario de conexión es lo "guardado" en el sensor.
 
+## Configurar el sensor real (`isascale-configure`)
+
+Herramienta de banco para dejar configurado **una vez** el IVT-S real (o el emulador) por CAN, con
+el mismo adaptador. Hace de BMS: cada comando espera su respuesta y, como cambiar la configuración
+exige modo STOP (el sensor deja de medir), siempre lo devuelve a RUN al terminar, aunque falle.
+
+```bash
+python -m isascale.configurator_cli --interface ixxat info              # identidad + canales, no cambia nada
+python -m isascale.configurator_cli --interface ixxat apply-ams         # perfil del AMS + STORE + verificación
+python -m isascale.configurator_cli --interface ixxat reset-log --yes   # borra el log "desde reset"
+```
+
+Perfil del AMS (`AMS_PROFILE`, lo que lee el firmware: `AMS_GitHub/docs/architecture/CAN_Protocol.md` §4):
+
+| Canal | ID | Modo | Periodo |
+|---|---|---|---|
+| I | `0x521` | cíclico | 20 ms (fábrica) |
+| T | `0x525` | cíclico | 1000 ms |
+| As | `0x527` | cíclico | 100 ms |
+
+más el **bit 5** de Config Result (bits 2/3 de error en `IVT_Result_state`; de fábrica están
+apagados). Big endian y signo sin invertir (el firmware fija el sentido en la prueba E-2).
+
+`reset-log` borra el log *desde reset* (`0x30`, DB1 = 2, con el número de serie). El log *overall*
+solo lo borra Isabellenhütte, y el datasheet no dice si el resultado `0x527` sigue a uno u otro:
+comprobarlo en el banco (el firmware trabaja con diferencias, no necesita ponerlo a cero).
+
+Salida: `0` hecho, `1` el sensor no responde / rechaza / no aplica algo, `2` uso o bus.
+También se instala el comando `isascale-configure`.
+
 ## Tests
 
 ```bash

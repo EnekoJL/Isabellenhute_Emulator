@@ -33,6 +33,7 @@ lo más parecido posible al sensor real.
 | F-17 | Modo sin GUI (`--headless`) para HIL/CI. | — |
 | F-18 | Memoria: ajustes "activos" (cambios por CAN) y "guardados" (`STORE`, o el formulario de la GUI al conectar). `0x3F` vuelve a los guardados, `0x3D` a los de fábrica. Lo guardado, los contadores de error y el log sobreviven a Stop/Start. Cada reinicio por comando suma el error de sistema 0x0F *Reset Watchdog*. | 8.5 |
 | F-19 | Log data (`0x42`/`0x43`): As total/carga/descarga (solo con As activado), tiempos de funcionamiento (total, I y T dentro/fuera de especificación, OC +/−), I máx/mín (A), T máx/mín (0,1 °C). U y Wh = 0 (U0). `0x30` DB1=2 borra el log "desde reset". | 3.4, 8.6 |
+| F-20 | **Configurador** (`isascale-configure`, lado BMS): `info` (serie, versión, DEVICE_ID, modo, Config Result de los 8 canales), `apply-ams` (STOP → Config Result de I/T/As con el bit 5 → STORE → RUN → relectura y comparación), `reset-log` (`0x30` DB1 = 2 con el número de serie, pide `--yes`). Cada comando espera su respuesta (respeta los 2 ms entre comandos) y salta resultados y respuestas ajenas; `0xFF` para ese comando, sin respuesta o eco distinto = error. Siempre deja el sensor en RUN. | 8.1, 8.4, 8.5, 8.7 |
 
 Convención de signo: **+ = descarga** (batería → motor), **− = carga** (regeneración). As crece al descargar.
 
@@ -58,6 +59,7 @@ Convención de signo: **+ = descarga** (batería → motor), **− = carga** (re
 | D-6 | Perfiles integrados son estímulos representativos, no datos medidos. | Sustituir por CSV reales de la moto cuando existan. |
 | D-7 | Supuestos donde el datasheet no dice nada: Set CAN ID se aplica al momento (en STOP); `0x3D` no cambia el bitrate; STORE responde a los 200 ms; OCS se libera por debajo del umbral de reset (o del de set si reset = 0); serie que no coincide = silencio; `SW_VERSION` y `ARTICLE_NUMBER` son valores de relleno. | Revisar con el sensor real. |
 | D-8 | U1..U3, W, Wh: se guardan y se responden en Config/CAN ID pero nunca se envían (U0 no tiene entradas de tensión). | Variante U0. |
+| D-9 | Perfil del AMS: I 20 ms, T 1000 ms, As 100 ms cíclicos, bit 5 activo, big endian, signo sin invertir. El configurador vive aquí (reutiliza protocolo, adaptadores y se prueba contra el propio emulador). No se pone a cero el As: el firmware usa diferencias. | Usuario 2026-11-18 (AMS: «quiero el Ah counter y el de temperatura»). |
 
 ## 5. Pendiente de validar con hardware
 
@@ -66,3 +68,5 @@ Convención de signo: **+ = descarga** (batería → motor), **− = carga** (re
 - Valores reales de DEVICE_ID, SW_VERSION y ARTICLE_NUMBER (¿el material 164513?) leídos del sensor.
 - Tiempo real de arranque (350–400 ms) y de respuesta de STORE.
 - Jitter real con IXXAT USB-to-CAN en Windows.
+- Si `0x30` DB1 = 2 ("Logdata since reset") pone a cero también el resultado `0x527` (As) o solo el log; y si el As arranca de 0 o del último valor guardado (cada 15 min) tras un corte de alimentación.
+- `isascale-configure apply-ams` contra el sensor real (tiempos de respuesta, eco de Config Result en STOP).
